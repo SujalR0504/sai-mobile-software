@@ -1,0 +1,26 @@
+export const PERMISSION_MODULES = [
+  "Dashboard",
+  "POS",
+  "Sales",
+  "Purchases",
+  "Sale Returns",
+  "Purchase Returns",
+  "Products",
+  "Stock",
+  "IMEI",
+  "Customers",
+  "Dealers",
+  "Repairs",
+  "Payments",
+  "EMI Receivables",
+  "Expenses",
+  "Cashbook",
+  "Reports",
+  "Employees",
+  "Attendance",
+  "Payroll",
+  "Orders",
+  "Settings",
+] as const;
+
+export type PermissionModule = (typeof PERMISSION_MODULES)[number];

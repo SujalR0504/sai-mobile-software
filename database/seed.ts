@@ -1,0 +1,354 @@
+import type { DB, Product, Unit } from "../shared/types";
+
+const day = (offset: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - offset);
+  return d.toISOString().slice(0, 10);
+};
+
+const P = (
+  id: string,
+  name: string,
+  brand: string,
+  model: string,
+  category: Product["category"],
+  tracked: boolean,
+  purchasePrice: number,
+  sellingPrice: number,
+  mrp: number,
+  extra: Partial<Product> = {},
+): Product => ({
+  id,
+  name,
+  brand,
+  model,
+  category,
+  tracked,
+  mrp,
+  purchasePrice,
+  sellingPrice,
+  gst: 18,
+  warrantyMonths: tracked ? 12 : 6,
+  qty: tracked ? 0 : 20,
+  reorderLevel: tracked ? 2 : 5,
+  supplierId: "sup1",
+  ...extra,
+});
+
+const products: Product[] = [
+  P("p1", "Samsung Galaxy A15 5G", "Samsung", "A15 5G", "Mobile Phones", true, 15200, 18490, 19999, {
+    ram: "8GB",
+    storage: "128GB",
+    color: "Blue Black",
+    variant: "8/128",
+    reorderLevel: 3,
+  }),
+  P("p2", "iQOO Z9x 5G", "iQOO", "Z9x", "Mobile Phones", true, 12400, 14999, 16999, {
+    ram: "6GB",
+    storage: "128GB",
+    color: "Storm Grey",
+    variant: "6/128",
+    supplierId: "sup2",
+  }),
+  P("p3", "Redmi 13 5G", "Redmi", "13 5G", "Mobile Phones", true, 11100, 13499, 14999, {
+    ram: "6GB",
+    storage: "128GB",
+    color: "Orchid Pink",
+    variant: "6/128",
+    supplierId: "sup2",
+  }),
+  P("p4", "iPhone 13", "Apple", "iPhone 13", "Mobile Phones", true, 44900, 51999, 59900, {
+    storage: "128GB",
+    color: "Midnight",
+    supplierId: "sup3",
+    reorderLevel: 1,
+  }),
+  P("p5", "Samsung Galaxy Tab A9", "Samsung", "Tab A9", "Tablets", true, 10800, 12999, 14999, {
+    ram: "4GB",
+    storage: "64GB",
+    color: "Graphite",
+  }),
+  P("p6", "25W USB-C Charger", "Samsung", "EP-TA800", "Chargers", false, 720, 999, 1299, {
+    qty: 5,
+    color: "White",
+  }),
+  P("p7", "20W USB-C Cable", "boAt", "Rugged C20", "Cables", false, 180, 299, 399, { qty: 1 }),
+  P("p8", "boAt Airdopes 141", "boAt", "Airdopes 141", "Earphones", false, 940, 1299, 2990, {
+    qty: 4,
+  }),
+  P("p9", "Silicone Back Cover", "Generic", "Universal", "Covers", false, 90, 249, 399, { qty: 42 }),
+  P("p10", "Tempered Glass 6.5\"", "Generic", "TG65", "Tempered Glass", false, 45, 199, 299, {
+    qty: 4,
+  }),
+  P("p11", "Noise ColorFit Pro 5", "Noise", "ColorFit Pro 5", "Smart Watches", true, 2900, 3799, 5999, {
+    color: "Jet Black",
+    warrantyMonths: 12,
+  }),
+  P("p12", "boAt Stone 350 Speaker", "boAt", "Stone 350", "Speakers", false, 1650, 2199, 3490, {
+    qty: 9,
+  }),
+];
+
+const imeiFor = (i: number) => `35${(401200000000 + i * 7919).toString().slice(0, 12)}`;
+
+const units: Unit[] = [];
+let u = 0;
+const addUnits = (productId: string, count: number, price: number, sold = 0) => {
+  for (let i = 0; i < count; i++) {
+    u++;
+    units.push({
+      id: `u${u}`,
+      productId,
+      imei1: imeiFor(u),
+      imei2: imeiFor(u + 500),
+      purchasePrice: price,
+      status: i < sold ? "sold" : "available",
+      purchaseId: "pur1",
+    });
+  }
+};
+addUnits("p1", 6, 15200, 1);
+addUnits("p2", 5, 12400, 1);
+addUnits("p3", 7, 11100, 0);
+addUnits("p4", 2, 44900, 0);
+addUnits("p5", 3, 10800, 0);
+addUnits("p11", 4, 2900, 0);
+
+export const seedDB = (): DB => ({
+  products,
+  units,
+  customers: [
+    { id: "c0", name: "Walk-in Customer", phone: "—", createdAt: day(400) },
+    { id: "c1", name: "Rahul Sharma", phone: "98110 44521", address: "Karol Bagh, Delhi", createdAt: day(120) },
+    { id: "c2", name: "Priya Menon", phone: "99534 11908", address: "Patel Nagar, Delhi", createdAt: day(70) },
+    { id: "c3", name: "Amit Verma", phone: "98999 77120", address: "Rajinder Nagar", createdAt: day(45) },
+    { id: "c4", name: "Sana Parveen", phone: "70423 55110", address: "Paharganj", createdAt: day(20) },
+  ],
+  suppliers: [
+    { id: "sup1", name: "Shree Telecom Distributors", phone: "98100 20001", gstin: "07AABCS1429B1Z5", address: "Gaffar Market, Delhi" },
+    { id: "sup2", name: "Aggarwal Mobile Agency", phone: "98110 33442", gstin: "07AACCA9981K1ZP", address: "Nehru Place, Delhi" },
+    { id: "sup3", name: "Metro Gadget Wholesale", phone: "99715 88120", gstin: "07AADCM7712Q1ZR", address: "Karol Bagh, Delhi" },
+  ],
+  sales: [
+    {
+      id: "s1",
+      invoiceNo: "INV-2038",
+      date: day(1),
+      customerId: "c3",
+      items: [
+        { productId: "p8", name: "boAt Airdopes 141", qty: 1, price: 1299, gst: 18, costPrice: 940 },
+        { productId: "p9", name: "Silicone Back Cover", qty: 2, price: 249, gst: 18, costPrice: 90 },
+      ],
+      discount: 0,
+      subtotal: 1523,
+      tax: 274,
+      total: 1797,
+      paid: 1797,
+      payments: [{ mode: "Cash", amount: 1797 }],
+    },
+    {
+      id: "s2",
+      invoiceNo: "INV-2039",
+      date: day(0),
+      customerId: "c1",
+      items: [
+        {
+          productId: "p1",
+          name: "Samsung Galaxy A15 5G",
+          unitId: "u1",
+          imei: units[0]!.imei1,
+          qty: 1,
+          price: 18490,
+          gst: 18,
+          costPrice: 15200,
+          warrantyMonths: 12,
+        },
+      ],
+      discount: 500,
+      subtotal: 15161,
+      tax: 2729,
+      total: 17890,
+      paid: 10000,
+      payments: [
+        { mode: "UPI", amount: 10000 },
+        { mode: "Credit", amount: 7890 },
+      ],
+    },
+    {
+      id: "s3",
+      invoiceNo: "INV-2040",
+      date: day(0),
+      customerId: "c2",
+      items: [
+        {
+          productId: "p2",
+          name: "iQOO Z9x 5G",
+          unitId: "u7",
+          imei: units[6]!.imei1,
+          qty: 1,
+          price: 14999,
+          gst: 18,
+          costPrice: 12400,
+          warrantyMonths: 12,
+        },
+      ],
+      discount: 0,
+      subtotal: 12711,
+      tax: 2288,
+      total: 14999,
+      paid: 14999,
+      payments: [{ mode: "Card", amount: 14999 }],
+    },
+  ],
+  purchases: [
+    {
+      id: "pur1",
+      invoiceNo: "PUR-1041",
+      date: day(4),
+      supplierId: "sup1",
+      items: [
+        { productId: "p1", name: "Samsung Galaxy A15 5G", qty: 6, price: 15200, gst: 18, costPrice: 15200 },
+        { productId: "p3", name: "Redmi 13 5G", qty: 7, price: 11100, gst: 18, costPrice: 11100 },
+      ],
+      discount: 0,
+      subtotal: 168900,
+      tax: 0,
+      total: 168900,
+      paid: 120000,
+      mode: "Bank",
+    },
+    {
+      id: "pur2",
+      invoiceNo: "PUR-1042",
+      date: day(0),
+      supplierId: "sup2",
+      items: [
+        { productId: "p8", name: "boAt Airdopes 141", qty: 20, price: 940, gst: 18, costPrice: 940 },
+        { productId: "p6", name: "25W USB-C Charger", qty: 25, price: 720, gst: 18, costPrice: 720 },
+      ],
+      discount: 0,
+      subtotal: 36800,
+      tax: 0,
+      total: 36800,
+      paid: 36800,
+      mode: "Cash",
+    },
+  ],
+  returns: [],
+  repairs: [
+    {
+      id: "r1",
+      jobId: "REP-1023",
+      customerId: "c4",
+      device: "OnePlus Nord CE 3",
+      imei: "356890114300112",
+      problem: "Charging port loose, not detecting cable",
+      estimate: 900,
+      advance: 200,
+      technician: "Imran",
+      status: "Diagnosing",
+      createdAt: day(2),
+    },
+    {
+      id: "r2",
+      jobId: "REP-1024",
+      customerId: "c2",
+      device: "Redmi 13",
+      imei: "352201778901143",
+      problem: "Battery drains fast",
+      estimate: 1150,
+      advance: 300,
+      technician: "Imran",
+      status: "Ready",
+      createdAt: day(3),
+    },
+    {
+      id: "r3",
+      jobId: "REP-1025",
+      customerId: "c1",
+      device: "iQOO Z9x",
+      imei: "354012988218821",
+      problem: "Display cracked, touch not working",
+      estimate: 2400,
+      advance: 1000,
+      technician: "Sohail",
+      status: "Repairing",
+      createdAt: day(1),
+    },
+  ],
+  expenses: [
+    { id: "e1", date: day(0), category: "Electricity", amount: 1850, note: "Shop meter" },
+    { id: "e2", date: day(0), category: "Transport", amount: 400, note: "Stock pickup" },
+    { id: "e3", date: day(6), category: "Rent", amount: 28000, note: "Monthly shop rent" },
+    { id: "e4", date: day(8), category: "Salary", amount: 34000, note: "Staff salary" },
+    { id: "e5", date: day(3), category: "Marketing", amount: 2500, note: "Local ads" },
+  ],
+  payments: [
+    { id: "pay1", date: day(4), party: "supplier", partyId: "sup1", refId: "pur1", amount: 120000, mode: "Bank" },
+    { id: "pay2", date: day(0), party: "supplier", partyId: "sup2", refId: "pur2", amount: 36800, mode: "Cash" },
+    { id: "pay3", date: day(0), party: "customer", partyId: "c1", refId: "s2", amount: 10000, mode: "UPI" },
+  ],
+  employees: [
+    { id: "emp1", businessId: "biz_default", branchId: "branch_01", name: "Amit Sharma", phone: "98100 11223", role: "sales", designation: "Sales Lead", salaryType: "monthly", basicSalary: 25000, status: "ACTIVE", joinedDate: "2024-01-01" },
+    { id: "emp2", businessId: "biz_default", branchId: "branch_01", name: "Rohit Verma", phone: "98100 22334", role: "technician", designation: "Hardware Engineer", salaryType: "monthly", basicSalary: 28000, status: "ACTIVE", joinedDate: "2024-01-15" },
+    { id: "emp3", businessId: "biz_default", branchId: "branch_01", name: "Neha Gupta", phone: "98100 33445", role: "manager", designation: "Store Manager", salaryType: "monthly", basicSalary: 35000, status: "ACTIVE", joinedDate: "2023-11-01" },
+  ],
+  attendance: [],
+  payroll: [],
+  stockMovements: [],
+  customerLedger: [],
+  supplierLedger: [],
+  cashbook: [],
+  auditLogs: [],
+  branches: [
+    { id: "branch_01", businessId: "biz_default", name: "Main Showroom", code: "DEL-MAIN", address: "Shop 14, Ajmal Khan Road, Karol Bagh, New Delhi 110005", phone: "98110 00011", email: "delhi@kartavya.com", isMain: true, active: true },
+  ],
+  settings: {
+    shopName: "SHRI SAI MOBILE",
+    tagline: "NO NEED TO WORRY",
+    ownerName: "Shri Sai Mobile",
+    phone: "8770758326",
+    whatsapp: "8770758326",
+    email: "saimobileharda@gmail.com",
+    address: "In Front of Court, Near Prashant Restaurant, HARDA (M.P.) 461331",
+    city: "Harda",
+    state: "Madhya Pradesh",
+    stateCode: "23",
+    pincode: "461331",
+    gstin: "23ASFPG1385D1Z7",
+    pan: "ASFPG1385D",
+    defaultGst: 18,
+    invoicePrefix: "GST/2026-27/",
+    gstInvoicePrefix: "GST/2026-27/",
+    nongstInvoicePrefix: "NG/2026-27/",
+    purchaseInvoicePrefix: "PUR/2026-27/",
+    openingCash: 25000,
+    logoUrl: "/shri_sai_logo.png",
+    brandsBannerUrl: "/brands_banner.png",
+    locationQrUrl: "/location_qr.png",
+    bankName: "State Bank of India",
+    bankAccountNo: "39810293847",
+    bankIfsc: "SBIN0000382",
+    bankBranch: "Main Branch, Harda",
+    watermarkEnabled: true,
+    watermarkText: "SHRI SAI MOBILE",
+    signatureTitle: "Authorised Signatory",
+    primaryColor: "#000000",
+    secondaryColor: "#f97316",
+    dealsIn: "Mobile Phones & Electronics Items",
+    businessServices: "SALES | SERVICE | ACCESSORIES | EXCHANGE | FINANCE",
+    footerText: "MOBILES | ACCESSORIES | SMART DEVICES | YOUR TRUSTED MOBILE PARTNER",
+    termsAndConditions: [
+      "Goods once sold will not be taken back or exchanged.",
+      "Manufacturer warranty will be applicable as per company policy.",
+      "Subject to Harda (M.P.) Jurisdiction only.",
+      "Please verify your GST details & items before leaving.",
+      "No cash refund. Exchange as per company policy.",
+      "Finance/EMI is subject to company's terms & conditions.",
+      "Late payment charges @ 2% per month on outstanding.",
+      "Cheque bounce charges ₹500/- per cheque.",
+      "All disputes subject to Harda (M.P.) jurisdiction only.",
+      "Thank you for shopping with SHRI SAI MOBILE."
+    ],
+  },
+});

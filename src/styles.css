@@ -1,0 +1,229 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Retail ERP — Mobile Store Edition
+ * Premium commercial design system.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+:root {
+  --radius: 0.75rem;
+
+  --background: oklch(0.968 0.012 250);
+  --foreground: oklch(0.2 0.04 260);
+  --card: rgba(255, 255, 255, 0.85);
+  --card-foreground: oklch(0.2 0.04 260);
+  --popover: rgba(255, 255, 255, 0.96);
+  --popover-foreground: oklch(0.2 0.04 260);
+
+  /* Modern vibrant indigo */
+  --primary: oklch(0.55 0.22 265);
+  --primary-foreground: #ffffff;
+
+  --secondary: rgba(255, 255, 255, 0.7);
+  --secondary-foreground: oklch(0.25 0.04 260);
+
+  --muted: rgba(30, 41, 59, 0.05);
+  --muted-foreground: oklch(0.48 0.03 258);
+
+  --accent: rgba(99, 102, 241, 0.1);
+  --accent-foreground: oklch(0.52 0.21 265);
+
+  --destructive: oklch(0.6 0.23 25);
+  --destructive-foreground: #ffffff;
+  --success: oklch(0.62 0.19 152);
+  --success-foreground: #ffffff;
+  --warning: oklch(0.72 0.18 70);
+  --warning-foreground: #2d1d02;
+  --info: oklch(0.58 0.18 235);
+  --info-foreground: #ffffff;
+
+  --border: rgba(148, 163, 184, 0.25);
+  --input: rgba(148, 163, 184, 0.3);
+  --ring: rgba(99, 102, 241, 0.35);
+
+  --surface-glass: rgba(255, 255, 255, 0.78);
+  --surface-glass-strong: rgba(255, 255, 255, 0.92);
+  --app-backdrop:
+    radial-gradient(1400px 700px at 5% -5%, rgba(99, 102, 241, 0.12), transparent 50%),
+    radial-gradient(1200px 800px at 95% 5%, rgba(168, 85, 247, 0.08), transparent 50%),
+    radial-gradient(1000px 800px at 50% 100%, rgba(56, 189, 248, 0.06), transparent 50%),
+    #f8fafc;
+  --shadow-glass:
+    0 1px 2px rgba(0, 0, 0, 0.03),
+    0 8px 24px -6px rgba(15, 23, 42, 0.07),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  --shadow-card:
+    0 2px 4px rgba(0, 0, 0, 0.02),
+    0 10px 30px -4px rgba(15, 23, 42, 0.06);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-sans);
+    letter-spacing: -0.01em;
+  }
+
+  body {
+    background: var(--app-backdrop);
+    background-attachment: fixed;
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+
+  /* Custom subtle scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.55);
+  }
+}
+
+@utility glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+@utility glass-strong {
+  background: var(--surface-glass-strong);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.6);
+  }
+}
+
+@utility animate-in-soft {
+  animation: fadein 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@utility glow-primary {
+  animation: pulseGlow 3s infinite ease-in-out;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide app navigation, aside, headers, overlays, buttons */
+  aside,
+  header,
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Ensure the printable invoice occupies the clean page */
+  .printable-invoice {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .print-area {
+    position: static !important;
+    width: 100% !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+}
+

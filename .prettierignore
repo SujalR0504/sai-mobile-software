@@ -1,0 +1,12 @@
+node_modules
+dist
+.output
+.vinxi
+.tanstack
+.wrangler
+data
+pnpm-lock.yaml
+package-lock.json
+bun.lock
+**/routeTree.gen.ts
+
