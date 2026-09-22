@@ -29,6 +29,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<
       "Purchases",
       "Sale Returns",
       "Purchase Returns",
+      "Credit Notes",
+      "Debit Notes",
       "Products",
       "Stock",
       "IMEI",
@@ -93,6 +95,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<
       "Payroll",
       "Dealers",
       "Customers",
+      "Credit Notes",
+      "Debit Notes",
     ],
     restrictedActions: ["DELETE", "ADJUST"],
   },
@@ -221,9 +225,25 @@ export function copyRolePermissionsToEmployee(
 export function checkEmployeePermission(
   db: DatabaseSync,
   employeeId: string,
-  module: string,
-  action: string,
+  moduleOrCode: string,
+  action?: string,
 ): boolean {
+  let module = moduleOrCode;
+  let resolvedAction = action || "VIEW";
+
+  // Normalize shorthand permission strings like "CREDIT_NOTE_CREATE"
+  if (!action && moduleOrCode.includes("_")) {
+    if (moduleOrCode.startsWith("CREDIT_NOTE_")) {
+      const act = moduleOrCode.replace("CREDIT_NOTE_", "");
+      module = "Credit Notes";
+      resolvedAction = act === "ISSUE" ? "APPROVE" : act === "APPLY" ? "ADJUST" : act;
+    } else if (moduleOrCode.startsWith("DEBIT_NOTE_")) {
+      const act = moduleOrCode.replace("DEBIT_NOTE_", "");
+      module = "Debit Notes";
+      resolvedAction = act === "ISSUE" ? "APPROVE" : act === "APPLY" ? "ADJUST" : act;
+    }
+  }
+
   // 1. Check if employee is OWNER or ADMIN
   const emp = db.prepare("SELECT role FROM employees WHERE id = ?").get(employeeId) as { role: Role } | undefined;
   if (!emp) return false;
@@ -233,7 +253,7 @@ export function checkEmployeePermission(
   const row = db.prepare("SELECT allowed FROM employee_permissions WHERE employee_id = ? AND module = ? AND action = ?").get(
     employeeId,
     module,
-    action,
+    resolvedAction,
   ) as { allowed: number } | undefined;
 
   if (row !== undefined) {
@@ -241,7 +261,7 @@ export function checkEmployeePermission(
   }
 
   // 3. Fallback to default permissions matrix for role
-  return getDefaultPermission(emp.role, module, action);
+  return getDefaultPermission(emp.role, module as PermissionModule, resolvedAction as PermissionAction);
 }
 
 export const checkPermission = checkEmployeePermission;

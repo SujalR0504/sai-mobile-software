@@ -1,7 +1,11 @@
 import {
   getCategoryStockReport,
+  getCreditNotesReport,
+  getCustomerCreditBalanceReport,
   getDashboardKPIs,
+  getDealerCreditBalanceReport,
   getDealerReport,
+  getDebitNotesReport,
   getEMIReport,
   getInventoryValuation,
   getImeiWiseReport,
@@ -67,6 +71,38 @@ export async function reportRoutes({ request, url, pathname, method, db }: Route
       status: url.searchParams.get("status") || undefined,
     };
     return jsonResponse(getImeiWiseReport(db, filters));
+  }
+
+  // Credit Note Report
+  if (pathname === "/api/reports/credit-notes" && method === "GET") {
+    const filters = {
+      dateFrom: url.searchParams.get("dateFrom") || undefined,
+      dateTo: url.searchParams.get("dateTo") || undefined,
+      customerId: url.searchParams.get("customerId") || undefined,
+      status: url.searchParams.get("status") || undefined,
+    };
+    return jsonResponse(getCreditNotesReport(db, filters));
+  }
+
+  // Debit Note Report
+  if (pathname === "/api/reports/debit-notes" && method === "GET") {
+    const filters = {
+      dateFrom: url.searchParams.get("dateFrom") || undefined,
+      dateTo: url.searchParams.get("dateTo") || undefined,
+      dealerId: url.searchParams.get("dealerId") || undefined,
+      status: url.searchParams.get("status") || undefined,
+    };
+    return jsonResponse(getDebitNotesReport(db, filters));
+  }
+
+  // Customer Credit Balance Report
+  if (pathname === "/api/reports/customer-credit-balance" && method === "GET") {
+    return jsonResponse(getCustomerCreditBalanceReport(db));
+  }
+
+  // Dealer Credit Balance Report
+  if (pathname === "/api/reports/dealer-credit-balance" && method === "GET") {
+    return jsonResponse(getDealerCreditBalanceReport(db));
   }
 
   return null;

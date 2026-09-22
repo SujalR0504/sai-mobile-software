@@ -298,6 +298,8 @@ export const seedDB = (): DB => ({
   stockMovements: [],
   customerLedger: [],
   supplierLedger: [],
+  creditNotes: [],
+  debitNotes: [],
   cashbook: [],
   auditLogs: [],
   paymentAccounts: [],

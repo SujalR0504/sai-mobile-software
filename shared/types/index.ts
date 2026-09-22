@@ -81,7 +81,9 @@ export type PermissionModule =
   | "Attendance"
   | "Payroll"
   | "Orders"
-  | "Settings";
+  | "Settings"
+  | "Credit Notes"
+  | "Debit Notes";
 
 export const PERMISSION_MODULES: PermissionModule[] = [
   "Dashboard",
@@ -106,6 +108,8 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   "Payroll",
   "Orders",
   "Settings",
+  "Credit Notes",
+  "Debit Notes",
 ];
 
 export type PermissionAction =
@@ -701,26 +705,210 @@ export interface PurchaseAttachment {
   createdAt: string;
 }
 
+export type NoteStatus = "DRAFT" | "ISSUED" | "PARTIALLY_APPLIED" | "PARTIALLY_ADJUSTED" | "APPLIED" | "ADJUSTED" | "REFUNDED" | "CANCELLED" | "ACTIVE" | "VOID";
+export type NoteAdjustmentType = "REFUND" | "ADJUST_DUE" | "CUSTOMER_CREDIT" | "DEALER_CREDIT" | "APPLY_INVOICE" | "APPLY_PURCHASE";
+
+export interface CreditNoteItem {
+  id: string;
+  creditNoteId: string;
+  productId: string;
+  unitId?: string;
+  imei?: string;
+  name: string;
+  qty: number;
+  rate: number;
+  discount?: number;
+  taxableAmount: number;
+  gstRate: number;
+  taxAmount: number;
+  total: number;
+  physicalReturn?: boolean;
+}
+
+export interface CreditNote {
+  id: string;
+  businessId?: string;
+  branchId?: string;
+  creditNoteNo: string;
+  noteNumber?: string;
+  date: string;
+  customerId: string;
+  customerName?: string;
+  customerPhone?: string;
+  saleId?: string;
+  originalInvoiceNo?: string;
+  originalInvoiceDate?: string;
+  reason: string;
+  notes?: string;
+  invoiceType: "GST" | "NON_GST";
+  subtotal: number;
+  tax: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  total: number;
+  amount?: number;
+  refundedAmount: number;
+  appliedAmount: number;
+  remainingAmount: number;
+  physicalReturn: boolean;
+  adjustmentType: NoteAdjustmentType;
+  status: NoteStatus;
+  returnId?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt?: string;
+  items?: CreditNoteItem[];
+}
+
+export interface DebitNoteItem {
+  id: string;
+  debitNoteId: string;
+  productId: string;
+  unitId?: string;
+  imei?: string;
+  name: string;
+  qty: number;
+  rate: number;
+  discount?: number;
+  taxableAmount: number;
+  gstRate: number;
+  taxAmount: number;
+  total: number;
+  physicalReturn?: boolean;
+}
+
 export interface DebitNote {
   id: string;
   businessId?: string;
+  branchId?: string;
+  debitNoteNo?: string;
   noteNumber: string;
   date: string;
   supplierId: string;
   dealerId?: string;
+  dealerName?: string;
+  dealerPhone?: string;
+  purchaseId?: string;
   originalInvoiceNo?: string;
   originalInvoiceDate?: string;
+  reason: string;
+  notes?: string;
+  remarks?: string;
+  invoiceType?: "GST" | "NON_GST";
+  subtotal?: number;
+  tax?: number;
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  total?: number;
+  amount: number;
+  taxableValue?: number;
+  refundedAmount?: number;
+  appliedAmount?: number;
+  remainingAmount?: number;
+  physicalReturn?: boolean;
+  adjustmentType?: NoteAdjustmentType;
+  status: NoteStatus;
   section?: string;
   tdsSection?: string;
   ratePct?: number;
   tdsRate?: number;
   tdsAmount?: number;
-  taxableValue?: number;
-  amount: number;
-  reason: string;
-  status: "ACTIVE" | "VOID";
-  notes?: string;
+  otherCharges?: number;
+  adjustmentAmount?: number;
+  returnId?: string;
+  createdBy?: string;
   createdAt: string;
+  updatedAt?: string;
+  items?: DebitNoteItem[];
+}
+
+export interface NoteAllocation {
+  id: string;
+  noteType: "CREDIT_NOTE" | "DEBIT_NOTE";
+  noteId: string;
+  targetType: "SALE" | "PURCHASE";
+  targetId: string;
+  targetNo: string;
+  amount: number;
+  date: string;
+  notes?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
+export interface NoteRefund {
+  id: string;
+  noteType: "CREDIT_NOTE" | "DEBIT_NOTE";
+  noteId: string;
+  partyType: "CUSTOMER" | "DEALER";
+  partyId: string;
+  amount: number;
+  paymentMethod: string;
+  paymentAccountId?: string;
+  paymentAccountName?: string;
+  referenceNumber?: string;
+  date: string;
+  remarks?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
+export interface CreditNoteReportRow {
+  id: string;
+  date: string;
+  creditNoteNo: string;
+  customerId: string;
+  customerName: string;
+  originalInvoiceNo: string;
+  reason: string;
+  amount: number;
+  gst: number;
+  total: number;
+  refunded: number;
+  adjusted: number;
+  remaining: number;
+  status: NoteStatus;
+  adjustmentType: string;
+}
+
+export interface DebitNoteReportRow {
+  id: string;
+  date: string;
+  debitNoteNo: string;
+  dealerId: string;
+  dealerName: string;
+  originalPurchaseNo: string;
+  reason: string;
+  amount: number;
+  gst: number;
+  total: number;
+  refunded: number;
+  adjusted: number;
+  remaining: number;
+  status: NoteStatus;
+  adjustmentType: string;
+}
+
+export interface CustomerCreditBalanceRow {
+  customerId: string;
+  customerName: string;
+  phone?: string;
+  totalCredit: number;
+  appliedCredit: number;
+  refunded: number;
+  remainingCredit: number;
+}
+
+export interface DealerCreditBalanceRow {
+  dealerId: string;
+  dealerName: string;
+  phone?: string;
+  totalCredit: number;
+  applied: number;
+  refunded: number;
+  remaining: number;
 }
 
 export interface Purchase {
@@ -952,7 +1140,7 @@ export interface CustomerLedgerEntry {
   businessId?: string;
   customerId: string;
   date: string;
-  type: "SALE" | "PAYMENT" | "SALE_RETURN" | "REFUND" | "CREDIT_ADJUSTMENT" | "DEBIT_ADJUSTMENT";
+  type: "SALE" | "PAYMENT" | "SALE_RETURN" | "REFUND" | "CREDIT_ADJUSTMENT" | "DEBIT_ADJUSTMENT" | "CREDIT_NOTE" | "CANCELLED_CREDIT_NOTE";
   referenceId?: string;
   debit: number; // Customer owes more
   credit: number; // Customer paid or returned
@@ -966,7 +1154,7 @@ export interface SupplierLedgerEntry {
   businessId?: string;
   supplierId: string;
   date: string;
-  type: "PURCHASE" | "PAYMENT" | "PURCHASE_RETURN" | "DEBIT_NOTE" | "CREDIT_NOTE" | "CREDIT_ADJUSTMENT" | "DEBIT_ADJUSTMENT";
+  type: "PURCHASE" | "PAYMENT" | "PURCHASE_RETURN" | "DEBIT_NOTE" | "CREDIT_NOTE" | "CREDIT_ADJUSTMENT" | "DEBIT_ADJUSTMENT" | "CANCELLED_DEBIT_NOTE";
   referenceId?: string;
   debit: number; // Store paid supplier or debit note (reduces payable)
   credit: number; // Store bought goods from supplier (increases payable)
@@ -1011,7 +1199,9 @@ export type InvoiceTemplateType =
   | "GST_PURCHASE"
   | "NON_GST_PURCHASE"
   | "SALE_RETURN"
-  | "PURCHASE_RETURN";
+  | "PURCHASE_RETURN"
+  | "CREDIT_NOTE"
+  | "DEBIT_NOTE";
 
 export interface Settings {
   shopName: string;
@@ -1069,6 +1259,7 @@ export interface DB {
   sales: Sale[];
   purchases: Purchase[];
   purchaseAttachments?: PurchaseAttachment[];
+  creditNotes?: CreditNote[];
   debitNotes?: DebitNote[];
   returns: ReturnDoc[];
   repairs: Repair[];

@@ -28,6 +28,8 @@ import {
   ArrowUpRight,
   Sparkles,
   ShoppingCart,
+  FileText,
+  FileSpreadsheet,
 } from "lucide-react";
 
 const NAV = [
@@ -39,6 +41,8 @@ const NAV = [
   { to: "/stock", label: "Inventory & IMEI", icon: Boxes },
   { to: "/purchase", label: "Inward Purchase", icon: ShoppingBag },
   { to: "/returns", label: "Sales Returns", icon: RotateCcw },
+  { to: "/credit-notes", label: "Credit Notes", icon: FileText },
+  { to: "/debit-notes", label: "Debit Notes", icon: FileSpreadsheet },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/suppliers", label: "Dealers", icon: Building2 },
   { to: "/repairs", label: "Repair Service", icon: Wrench },

@@ -142,9 +142,9 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
   watermarkEnabled,
   className = "",
 }) => {
-  const isGst = type === "GST_SALE" || type === "GST_PURCHASE";
-  const isPurchase = type === "GST_PURCHASE" || type === "NON_GST_PURCHASE" || type === "PURCHASE_RETURN";
-  const isReturn = type === "SALE_RETURN" || type === "PURCHASE_RETURN";
+  const isGst = type === "GST_SALE" || type === "GST_PURCHASE" || ((type === "CREDIT_NOTE" || type === "DEBIT_NOTE") && ((totals.cgstAmount ?? 0) > 0 || (totals.igstAmount ?? 0) > 0));
+  const isPurchase = type === "GST_PURCHASE" || type === "NON_GST_PURCHASE" || type === "PURCHASE_RETURN" || type === "DEBIT_NOTE";
+  const isReturn = type === "SALE_RETURN" || type === "PURCHASE_RETURN" || type === "CREDIT_NOTE" || type === "DEBIT_NOTE";
 
   // Ribbon Title
   let title = "TAX INVOICE";
@@ -153,6 +153,8 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
   else if (type === "NON_GST_PURCHASE") title = "PURCHASE INVOICE (NON-GST)";
   else if (type === "SALE_RETURN") title = "CREDIT NOTE / SALE RETURN";
   else if (type === "PURCHASE_RETURN") title = "DEBIT NOTE / PURCHASE RETURN";
+  else if (type === "CREDIT_NOTE") title = "CREDIT NOTE";
+  else if (type === "DEBIT_NOTE") title = "DEBIT NOTE";
 
   const showWatermark = watermarkEnabled ?? (settings.watermarkEnabled !== false);
   const watermarkText = settings.watermarkText || "SHRI SAI MOBILE";
@@ -387,7 +389,7 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
         <div className="border-b md:border-b-0 md:border-r border-black p-2.5 bg-slate-50/50">
           <div className="space-y-1">
             <div className="flex items-center justify-between pb-1 border-b border-slate-200">
-              <span className="font-bold text-slate-700">Invoice No.</span>
+              <span className="font-bold text-slate-700">{type === "CREDIT_NOTE" ? "Credit Note No." : type === "DEBIT_NOTE" ? "Debit Note No." : "Invoice No."}</span>
               <span className="font-mono font-black text-red-600 text-xs tracking-wider">{invoiceNo}</span>
             </div>
             <div className="flex items-center justify-between">

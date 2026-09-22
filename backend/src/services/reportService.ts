@@ -622,3 +622,154 @@ export function getImeiWiseReport(
     };
   });
 }
+
+/**
+ * Section 44: Credit Note Report
+ */
+export function getCreditNotesReport(
+  db: DatabaseSync,
+  filters?: { dateFrom?: string; dateTo?: string; customerId?: string; status?: string }
+) {
+  let query = `
+    SELECT
+      cn.id,
+      cn.date,
+      cn.credit_note_no,
+      c.id as customer_id,
+      c.name as customer_name,
+      COALESCE(cn.original_invoice_no, '—') as original_invoice_no,
+      cn.reason,
+      cn.subtotal as amount,
+      cn.tax as gst,
+      cn.total,
+      cn.refunded_amount as refunded,
+      cn.applied_amount as adjusted,
+      cn.remaining_amount as remaining,
+      cn.status,
+      cn.adjustment_type
+    FROM credit_notes cn
+    JOIN customers c ON cn.customer_id = c.id
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+
+  if (filters?.dateFrom) {
+    query += " AND cn.date >= ?";
+    params.push(filters.dateFrom);
+  }
+  if (filters?.dateTo) {
+    query += " AND cn.date <= ?";
+    params.push(filters.dateTo);
+  }
+  if (filters?.customerId) {
+    query += " AND cn.customer_id = ?";
+    params.push(filters.customerId);
+  }
+  if (filters?.status && filters.status !== "ALL") {
+    query += " AND cn.status = ?";
+    params.push(filters.status);
+  }
+
+  query += " ORDER BY cn.date DESC, cn.created_at DESC";
+
+  return db.prepare(query).all(...params);
+}
+
+/**
+ * Section 44: Debit Note Report
+ */
+export function getDebitNotesReport(
+  db: DatabaseSync,
+  filters?: { dateFrom?: string; dateTo?: string; dealerId?: string; status?: string }
+) {
+  let query = `
+    SELECT
+      dn.id,
+      dn.date,
+      dn.debit_note_no,
+      s.id as dealer_id,
+      s.name as dealer_name,
+      COALESCE(dn.original_invoice_no, '—') as original_purchase_no,
+      dn.reason,
+      COALESCE(dn.subtotal, dn.amount) as amount,
+      COALESCE(dn.tax, 0) as gst,
+      COALESCE(dn.total, dn.amount) as total,
+      COALESCE(dn.refunded_amount, 0) as refunded,
+      COALESCE(dn.applied_amount, 0) as adjusted,
+      COALESCE(dn.remaining_amount, dn.amount) as remaining,
+      dn.status,
+      dn.adjustment_type
+    FROM debit_notes dn
+    JOIN suppliers s ON dn.dealer_id = s.id
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+
+  if (filters?.dateFrom) {
+    query += " AND dn.date >= ?";
+    params.push(filters.dateFrom);
+  }
+  if (filters?.dateTo) {
+    query += " AND dn.date <= ?";
+    params.push(filters.dateTo);
+  }
+  if (filters?.dealerId) {
+    query += " AND dn.dealer_id = ?";
+    params.push(filters.dealerId);
+  }
+  if (filters?.status && filters.status !== "ALL") {
+    query += " AND dn.status = ?";
+    params.push(filters.status);
+  }
+
+  query += " ORDER BY dn.date DESC, dn.created_at DESC";
+
+  return db.prepare(query).all(...params);
+}
+
+/**
+ * Section 45: Customer Credit Balance Report
+ */
+export function getCustomerCreditBalanceReport(db: DatabaseSync) {
+  const query = `
+    SELECT
+      c.id as customer_id,
+      c.name as customer_name,
+      c.phone,
+      COALESCE(SUM(CASE WHEN cn.status != 'CANCELLED' THEN cn.total ELSE 0 END), 0) as total_credit,
+      COALESCE(SUM(CASE WHEN cn.status != 'CANCELLED' THEN cn.applied_amount ELSE 0 END), 0) as applied_credit,
+      COALESCE(SUM(CASE WHEN cn.status != 'CANCELLED' THEN cn.refunded_amount ELSE 0 END), 0) as refunded,
+      COALESCE(SUM(CASE WHEN cn.status != 'CANCELLED' THEN cn.remaining_amount ELSE 0 END), 0) as remaining_credit
+    FROM customers c
+    LEFT JOIN credit_notes cn ON c.id = cn.customer_id
+    GROUP BY c.id, c.name, c.phone
+    HAVING total_credit > 0 OR remaining_credit > 0
+    ORDER BY remaining_credit DESC, total_credit DESC
+  `;
+
+  return db.prepare(query).all();
+}
+
+/**
+ * Section 46: Dealer Credit Balance Report
+ */
+export function getDealerCreditBalanceReport(db: DatabaseSync) {
+  const query = `
+    SELECT
+      s.id as dealer_id,
+      s.name as dealer_name,
+      s.phone,
+      COALESCE(SUM(CASE WHEN dn.status != 'CANCELLED' THEN COALESCE(dn.total, dn.amount) ELSE 0 END), 0) as total_credit,
+      COALESCE(SUM(CASE WHEN dn.status != 'CANCELLED' THEN dn.applied_amount ELSE 0 END), 0) as applied,
+      COALESCE(SUM(CASE WHEN dn.status != 'CANCELLED' THEN dn.refunded_amount ELSE 0 END), 0) as refunded,
+      COALESCE(SUM(CASE WHEN dn.status != 'CANCELLED' THEN COALESCE(dn.remaining_amount, dn.amount) ELSE 0 END), 0) as remaining
+    FROM suppliers s
+    LEFT JOIN debit_notes dn ON s.id = dn.dealer_id
+    GROUP BY s.id, s.name, s.phone
+    HAVING total_credit > 0 OR remaining > 0
+    ORDER BY remaining DESC, total_credit DESC
+  `;
+
+  return db.prepare(query).all();
+}
+

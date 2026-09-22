@@ -26,6 +26,8 @@ import type {
   Unit,
   InterestType,
   PaymentSplit,
+  CreditNote,
+  DebitNote,
 } from "./types";
 import {
   auditApi,
@@ -39,6 +41,8 @@ import {
   salesApi,
   settingsApi,
   ordersApi,
+  creditNotesApi,
+  debitNotesApi,
 } from "../services/api";
 import type {
   CustomerOrder,
@@ -163,6 +167,14 @@ interface StoreValue {
   convertOrderToSale: (orderId: string, input: ConvertOrderToSaleInput) => Promise<{ sale: Sale; order: CustomerOrder }>;
   cancelOrder: (orderId: string, input: CancelOrderInput) => Promise<CustomerOrder>;
   updateOrderStatus: (orderId: string, status: OrderStatus, remarks?: string) => Promise<CustomerOrder>;
+  createCreditNote: (data: any) => Promise<CreditNote>;
+  applyCreditNote: (id: string, data: { allocations: Array<{ saleId: string; amount: number }> }) => Promise<CreditNote>;
+  refundCreditNote: (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }) => Promise<CreditNote>;
+  cancelCreditNote: (id: string, reason: string) => Promise<CreditNote>;
+  createDebitNote: (data: any) => Promise<DebitNote>;
+  applyDebitNote: (id: string, data: { allocations: Array<{ purchaseId: string; amount: number }> }) => Promise<DebitNote>;
+  refundDebitNote: (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }) => Promise<DebitNote>;
+  cancelDebitNote: (id: string, reason: string) => Promise<DebitNote>;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -747,6 +759,78 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refreshFromBackend],
   );
 
+  const createCreditNote = useCallback(
+    async (data: any): Promise<CreditNote> => {
+      const res = await creditNotesApi.create(data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const applyCreditNote = useCallback(
+    async (id: string, data: { allocations: Array<{ saleId: string; amount: number }> }): Promise<CreditNote> => {
+      const res = await creditNotesApi.apply(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const refundCreditNote = useCallback(
+    async (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }): Promise<CreditNote> => {
+      const res = await creditNotesApi.refund(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const cancelCreditNote = useCallback(
+    async (id: string, reason: string): Promise<CreditNote> => {
+      const res = await creditNotesApi.cancel(id, reason);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const createDebitNote = useCallback(
+    async (data: any): Promise<DebitNote> => {
+      const res = await debitNotesApi.create(data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const applyDebitNote = useCallback(
+    async (id: string, data: { allocations: Array<{ purchaseId: string; amount: number }> }): Promise<DebitNote> => {
+      const res = await debitNotesApi.apply(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const refundDebitNote = useCallback(
+    async (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }): Promise<DebitNote> => {
+      const res = await debitNotesApi.refund(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const cancelDebitNote = useCallback(
+    async (id: string, reason: string): Promise<DebitNote> => {
+      const res = await debitNotesApi.cancel(id, reason);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
   const value = useMemo<StoreValue>(
     () => ({
       db,
@@ -777,6 +861,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       convertOrderToSale,
       cancelOrder,
       updateOrderStatus,
+      createCreditNote,
+      applyCreditNote,
+      refundCreditNote,
+      cancelCreditNote,
+      createDebitNote,
+      applyDebitNote,
+      refundDebitNote,
+      cancelDebitNote,
     }),
     [
       db,
@@ -807,6 +899,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       convertOrderToSale,
       cancelOrder,
       updateOrderStatus,
+      createCreditNote,
+      applyCreditNote,
+      refundCreditNote,
+      cancelCreditNote,
+      createDebitNote,
+      applyDebitNote,
+      refundDebitNote,
+      cancelDebitNote,
     ],
   );
 
@@ -902,3 +1002,15 @@ export const lowStockProducts = (db: DB) =>
     .map((p) => ({ product: p, stock: stockOf(db, p.id) }))
     .filter((r) => r.stock <= r.product.reorderLevel)
     .sort((a, b) => a.stock - b.stock);
+
+export const customerCreditBalance = (db: DB, customerId: string): number => {
+  return (db.creditNotes || [])
+    .filter((cn) => cn.customerId === customerId && (cn.status === "ISSUED" || cn.status === "PARTIALLY_ADJUSTED"))
+    .reduce((sum, cn) => sum + (cn.remainingAmount ?? 0), 0);
+};
+
+export const dealerCreditBalance = (db: DB, supplierId: string): number => {
+  return (db.debitNotes || [])
+    .filter((dn) => dn.supplierId === supplierId && (dn.status === "ISSUED" || dn.status === "PARTIALLY_ADJUSTED"))
+    .reduce((sum, dn) => sum + (dn.remainingAmount ?? 0), 0);
+};

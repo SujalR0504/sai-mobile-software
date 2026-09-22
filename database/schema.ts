@@ -237,6 +237,7 @@ export function initSchema(db: DatabaseSync): void {
       imei TEXT,
       movement_type TEXT NOT NULL,
       quantity INTEGER NOT NULL,
+      qty INTEGER,
       cost_per_unit REAL NOT NULL,
       reference_id TEXT,
       notes TEXT,
@@ -892,6 +893,12 @@ export function runMigrations(db: DatabaseSync): void {
   addColumnIfNotExists(db, "finance_companies", "default_interest_rate", "REAL DEFAULT 0");
   addColumnIfNotExists(db, "finance_companies", "default_tenure", "INTEGER DEFAULT 12");
 
+  addColumnIfNotExists(db, "note_allocations", "allocated_amount", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "note_allocations", "sale_id", "TEXT");
+  addColumnIfNotExists(db, "note_allocations", "purchase_id", "TEXT");
+  addColumnIfNotExists(db, "note_refunds", "reference_no", "TEXT");
+  addColumnIfNotExists(db, "stock_movements", "qty", "INTEGER");
+
   // Ensure new tables are created in existing databases
   db.exec(`
     CREATE TABLE IF NOT EXISTS finance_companies (
@@ -1353,12 +1360,136 @@ export function runMigrations(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
     CREATE INDEX IF NOT EXISTS idx_order_payments_order ON order_payments(order_id);
     CREATE INDEX IF NOT EXISTS idx_order_history_order ON order_status_history(order_id);
+
+    -- Credit Notes, Debit Note Items, Allocations, Refunds
+    CREATE TABLE IF NOT EXISTS credit_notes (
+      id TEXT PRIMARY KEY,
+      business_id TEXT DEFAULT 'biz_default',
+      branch_id TEXT DEFAULT 'branch_01',
+      credit_note_no TEXT NOT NULL UNIQUE,
+      date TEXT NOT NULL,
+      customer_id TEXT NOT NULL REFERENCES customers(id),
+      sale_id TEXT REFERENCES sales(id),
+      original_invoice_no TEXT,
+      original_invoice_date TEXT,
+      reason TEXT NOT NULL,
+      notes TEXT,
+      invoice_type TEXT NOT NULL DEFAULT 'GST',
+      subtotal REAL NOT NULL DEFAULT 0,
+      tax REAL NOT NULL DEFAULT 0,
+      cgst REAL NOT NULL DEFAULT 0,
+      sgst REAL NOT NULL DEFAULT 0,
+      igst REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      refunded_amount REAL NOT NULL DEFAULT 0,
+      applied_amount REAL NOT NULL DEFAULT 0,
+      remaining_amount REAL NOT NULL DEFAULT 0,
+      physical_return INTEGER NOT NULL DEFAULT 0,
+      adjustment_type TEXT NOT NULL DEFAULT 'CUSTOMER_CREDIT',
+      status TEXT NOT NULL DEFAULT 'ISSUED',
+      return_id TEXT REFERENCES returns(id),
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS credit_note_items (
+      id TEXT PRIMARY KEY,
+      credit_note_id TEXT NOT NULL REFERENCES credit_notes(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL REFERENCES products(id),
+      unit_id TEXT REFERENCES units(id),
+      imei TEXT,
+      name TEXT NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      rate REAL NOT NULL,
+      discount REAL NOT NULL DEFAULT 0,
+      taxable_amount REAL NOT NULL,
+      gst_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL,
+      physical_return INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS debit_note_items (
+      id TEXT PRIMARY KEY,
+      debit_note_id TEXT NOT NULL REFERENCES debit_notes(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL REFERENCES products(id),
+      unit_id TEXT REFERENCES units(id),
+      imei TEXT,
+      name TEXT NOT NULL,
+      qty INTEGER NOT NULL DEFAULT 1,
+      rate REAL NOT NULL,
+      discount REAL NOT NULL DEFAULT 0,
+      taxable_amount REAL NOT NULL,
+      gst_rate REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL,
+      physical_return INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS note_allocations (
+      id TEXT PRIMARY KEY,
+      note_type TEXT NOT NULL,
+      note_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      target_no TEXT NOT NULL,
+      amount REAL NOT NULL,
+      allocated_amount REAL DEFAULT 0,
+      sale_id TEXT,
+      purchase_id TEXT,
+      date TEXT NOT NULL,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS note_refunds (
+      id TEXT PRIMARY KEY,
+      note_type TEXT NOT NULL,
+      note_id TEXT NOT NULL,
+      party_type TEXT NOT NULL,
+      party_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payment_method TEXT NOT NULL,
+      payment_account_id TEXT REFERENCES payment_accounts(id),
+      reference_number TEXT,
+      date TEXT NOT NULL,
+      remarks TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credit_notes_customer ON credit_notes(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_credit_notes_sale ON credit_notes(sale_id);
+    CREATE INDEX IF NOT EXISTS idx_credit_notes_no ON credit_notes(credit_note_no);
+    CREATE INDEX IF NOT EXISTS idx_credit_note_items_note ON credit_note_items(credit_note_id);
+    CREATE INDEX IF NOT EXISTS idx_debit_note_items_note ON debit_note_items(debit_note_id);
+    CREATE INDEX IF NOT EXISTS idx_note_allocations_note ON note_allocations(note_id);
+    CREATE INDEX IF NOT EXISTS idx_note_refunds_note ON note_refunds(note_id);
   `);
 
   addColumnIfNotExists(db, "settings", "reserve_stock_on_order", "INTEGER DEFAULT 0");
   addColumnIfNotExists(db, "settings", "order_prefix", "TEXT DEFAULT 'ORD-'");
   addColumnIfNotExists(db, "products", "reserved_qty", "INTEGER DEFAULT 0");
   addColumnIfNotExists(db, "units", "order_id", "TEXT REFERENCES orders(id)");
+
+  // Debit Note additions
+  addColumnIfNotExists(db, "debit_notes", "purchase_id", "TEXT REFERENCES purchases(id)");
+  addColumnIfNotExists(db, "debit_notes", "invoice_type", "TEXT DEFAULT 'GST'");
+  addColumnIfNotExists(db, "debit_notes", "subtotal", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "cgst", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "sgst", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "igst", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "total", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "refunded_amount", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "applied_amount", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "remaining_amount", "REAL DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "physical_return", "INTEGER DEFAULT 0");
+  addColumnIfNotExists(db, "debit_notes", "adjustment_type", "TEXT DEFAULT 'DEALER_CREDIT'");
+  addColumnIfNotExists(db, "debit_notes", "status", "TEXT DEFAULT 'ISSUED'");
+  addColumnIfNotExists(db, "debit_notes", "return_id", "TEXT REFERENCES returns(id)");
+  addColumnIfNotExists(db, "debit_notes", "updated_at", "TEXT");
 
   seedCategoriesAndHierarchy(db);
   seedReferenceDealers(db);
@@ -1793,6 +1924,11 @@ export function seedIfEmpty(db: DatabaseSync): void {
 export function wipeAllData(db: DatabaseSync): void {
   db.exec(`
     PRAGMA foreign_keys = OFF;
+    DELETE FROM note_refunds;
+    DELETE FROM note_allocations;
+    DELETE FROM debit_note_items;
+    DELETE FROM credit_note_items;
+    DELETE FROM credit_notes;
     DELETE FROM order_status_history;
     DELETE FROM order_payments;
     DELETE FROM order_items;

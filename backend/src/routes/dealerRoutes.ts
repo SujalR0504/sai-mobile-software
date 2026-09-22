@@ -1,5 +1,4 @@
 import { getDebitNotes, getSupplierLedger, getSuppliers } from "../repositories/repository";
-import { listDebitNotes, recordDebitNote } from "../services/debitNoteService";
 import {
   addSupplier,
   getSupplierDue,
@@ -83,18 +82,6 @@ export async function dealerRoutes({ request, url, pathname, method, db }: Route
   if (pathname.startsWith("/api/ledgers/supplier/")) {
     const supplierId = pathname.replace("/api/ledgers/supplier/", "");
     return jsonResponse(getSupplierLedger(db, supplierId));
-  }
-
-  // Debit Notes
-  if (pathname === "/api/debit-notes") {
-    if (method === "GET") {
-      const dealerId = url.searchParams.get("dealerId") || undefined;
-      return jsonResponse(listDebitNotes(db, dealerId));
-    }
-    if (method === "POST") {
-      const body = await request.json();
-      return jsonResponse(recordDebitNote(db, body), 201);
-    }
   }
 
   return null;

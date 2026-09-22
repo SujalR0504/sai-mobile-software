@@ -18,3 +18,5 @@ export * from "./settingsApi";
 export * from "./auditApi";
 export * from "./paymentAccountsApi";
 export * from "./ordersApi";
+export * from "./creditNotesApi";
+export * from "./debitNotesApi";

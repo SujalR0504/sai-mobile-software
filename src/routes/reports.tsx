@@ -23,6 +23,10 @@ import type {
   ItemWiseSummary,
   ProductStockLedgerEntry,
   ImeiWiseReportRow,
+  CreditNoteReportRow,
+  DebitNoteReportRow,
+  CustomerCreditBalanceRow,
+  DealerCreditBalanceRow,
 } from "@/lib/types";
 
 export const Route = createFileRoute("/reports")({
@@ -35,7 +39,7 @@ export const Route = createFileRoute("/reports")({
 function ReportsPage() {
   const { db } = useStore();
   const [activeTab, setActiveTab] = useState<
-    "overview" | "item_wise" | "imei_wise" | "emi" | "dealers" | "categories" | "gst"
+    "overview" | "item_wise" | "imei_wise" | "emi" | "dealers" | "categories" | "gst" | "credit_notes" | "debit_notes" | "customer_credit" | "dealer_credit"
   >("overview");
 
   // Remote reports data
@@ -140,13 +144,139 @@ function ReportsPage() {
     }
   };
 
+  // Credit Notes Report State
+  const [cnStartDate, setCnStartDate] = useState("");
+  const [cnEndDate, setCnEndDate] = useState("");
+  const [cnStatus, setCnStatus] = useState("ALL");
+  const [cnCustomerId, setCnCustomerId] = useState("ALL");
+  const [cnRows, setCnRows] = useState<CreditNoteReportRow[]>([]);
+  const [cnSummary, setCnSummary] = useState<any>(null);
+  const [loadingCn, setLoadingCn] = useState(false);
+
+  const loadCnReport = async () => {
+    setLoadingCn(true);
+    try {
+      const params = new URLSearchParams();
+      if (cnStartDate) params.append("startDate", cnStartDate);
+      if (cnEndDate) params.append("endDate", cnEndDate);
+      if (cnStatus !== "ALL") params.append("status", cnStatus);
+      if (cnCustomerId !== "ALL") params.append("customerId", cnCustomerId);
+      const res = await fetch(`/api/reports/credit-notes?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCnRows(data.rows || []);
+        setCnSummary(data.summary || null);
+      }
+    } catch (e) {
+      console.error("Error loading credit notes report", e);
+    } finally {
+      setLoadingCn(false);
+    }
+  };
+
+  // Debit Notes Report State
+  const [dnStartDate, setDnStartDate] = useState("");
+  const [dnEndDate, setDnEndDate] = useState("");
+  const [dnStatus, setDnStatus] = useState("ALL");
+  const [dnSupplierId, setDnSupplierId] = useState("ALL");
+  const [dnRows, setDnRows] = useState<DebitNoteReportRow[]>([]);
+  const [dnSummary, setDnSummary] = useState<any>(null);
+  const [loadingDn, setLoadingDn] = useState(false);
+
+  const loadDnReport = async () => {
+    setLoadingDn(true);
+    try {
+      const params = new URLSearchParams();
+      if (dnStartDate) params.append("startDate", dnStartDate);
+      if (dnEndDate) params.append("endDate", dnEndDate);
+      if (dnStatus !== "ALL") params.append("status", dnStatus);
+      if (dnSupplierId !== "ALL") params.append("supplierId", dnSupplierId);
+      const res = await fetch(`/api/reports/debit-notes?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDnRows(data.rows || []);
+        setDnSummary(data.summary || null);
+      }
+    } catch (e) {
+      console.error("Error loading debit notes report", e);
+    } finally {
+      setLoadingDn(false);
+    }
+  };
+
+  // Customer Credit Balance Report State
+  const [custCreditRows, setCustCreditRows] = useState<CustomerCreditBalanceRow[]>([]);
+  const [custCreditSummary, setCustCreditSummary] = useState<any>(null);
+  const [loadingCustCredit, setLoadingCustCredit] = useState(false);
+
+  const loadCustCreditReport = async () => {
+    setLoadingCustCredit(true);
+    try {
+      const res = await fetch("/api/reports/customer-credit-balance");
+      if (res.ok) {
+        const data = await res.json();
+        setCustCreditRows(data.rows || []);
+        setCustCreditSummary(data.summary || null);
+      }
+    } catch (e) {
+      console.error("Error loading customer credit balance report", e);
+    } finally {
+      setLoadingCustCredit(false);
+    }
+  };
+
+  // Dealer Credit Balance Report State
+  const [dealerCreditRows, setDealerCreditRows] = useState<DealerCreditBalanceRow[]>([]);
+  const [dealerCreditSummary, setDealerCreditSummary] = useState<any>(null);
+  const [loadingDealerCredit, setLoadingDealerCredit] = useState(false);
+
+  const loadDealerCreditReport = async () => {
+    setLoadingDealerCredit(true);
+    try {
+      const res = await fetch("/api/reports/dealer-credit-balance");
+      if (res.ok) {
+        const data = await res.json();
+        setDealerCreditRows(data.rows || []);
+        setDealerCreditSummary(data.summary || null);
+      }
+    } catch (e) {
+      console.error("Error loading dealer credit balance report", e);
+    } finally {
+      setLoadingDealerCredit(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "item_wise") {
       loadItemWiseReport();
     } else if (activeTab === "imei_wise") {
       loadImeiWiseReport();
+    } else if (activeTab === "credit_notes") {
+      loadCnReport();
+    } else if (activeTab === "debit_notes") {
+      loadDnReport();
+    } else if (activeTab === "customer_credit") {
+      loadCustCreditReport();
+    } else if (activeTab === "dealer_credit") {
+      loadDealerCreditReport();
     }
-  }, [activeTab, itemCategory, itemBrand, itemProductType, itemGstType, imeiStatus, imeiBrand]);
+  }, [
+    activeTab,
+    itemCategory,
+    itemBrand,
+    itemProductType,
+    itemGstType,
+    imeiStatus,
+    imeiBrand,
+    cnStartDate,
+    cnEndDate,
+    cnStatus,
+    cnCustomerId,
+    dnStartDate,
+    dnEndDate,
+    dnStatus,
+    dnSupplierId,
+  ]);
 
   const filteredItemWiseRows = useMemo(() => {
     const q = itemSearchQuery.trim().toLowerCase();
@@ -255,6 +385,164 @@ function ReportsPage() {
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `imei_wise_report_${todayISO()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportCreditNotesCSV = () => {
+    if (cnRows.length === 0) return;
+    const headers = [
+      "Date",
+      "Credit Note #",
+      "Original Invoice #",
+      "Original Invoice Date",
+      "Customer Name",
+      "Customer Phone",
+      "Return Type",
+      "Items Summary",
+      "Subtotal",
+      "CGST",
+      "SGST",
+      "IGST",
+      "Total Amount",
+      "Refunded Amount",
+      "Applied Amount",
+      "Remaining Balance",
+      "Status",
+    ];
+    const rows = cnRows.map((r) => [
+      r.date,
+      `"${r.noteNumber}"`,
+      `"${r.originalInvoiceNo || ""}"`,
+      r.originalInvoiceDate || "",
+      `"${r.customerName}"`,
+      `"${r.customerPhone || ""}"`,
+      r.physicalReturn ? "Physical Return" : "Financial Adjustment",
+      `"${(r.itemsSummary || "").replace(/"/g, '""')}"`,
+      r.subtotal,
+      r.cgst,
+      r.sgst,
+      r.igst,
+      r.total,
+      r.refundedAmount,
+      r.appliedAmount,
+      r.remainingAmount,
+      r.status,
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `credit_notes_report_${todayISO()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportDebitNotesCSV = () => {
+    if (dnRows.length === 0) return;
+    const headers = [
+      "Date",
+      "Debit Note #",
+      "Original Purchase Bill #",
+      "Original Bill Date",
+      "Dealer Name",
+      "Return Type",
+      "Items Summary",
+      "Subtotal",
+      "CGST",
+      "SGST",
+      "IGST",
+      "Total Amount",
+      "Refunded Amount",
+      "Applied Amount",
+      "Remaining Balance",
+      "Status",
+    ];
+    const rows = dnRows.map((r) => [
+      r.date,
+      `"${r.noteNumber}"`,
+      `"${r.originalInvoiceNo || ""}"`,
+      r.originalInvoiceDate || "",
+      `"${r.dealerName}"`,
+      r.physicalReturn ? "Physical Return" : "Financial Adjustment",
+      `"${(r.itemsSummary || "").replace(/"/g, '""')}"`,
+      r.subtotal,
+      r.cgst,
+      r.sgst,
+      r.igst,
+      r.total,
+      r.refundedAmount,
+      r.appliedAmount,
+      r.remainingAmount,
+      r.status,
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `debit_notes_report_${todayISO()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportCustomerCreditCSV = () => {
+    if (custCreditRows.length === 0) return;
+    const headers = [
+      "Customer Name",
+      "Mobile",
+      "Total Notes Issued",
+      "Total Credit Amount",
+      "Total Used / Adjusted",
+      "Total Refunded",
+      "Current Credit Balance Available",
+    ];
+    const rows = custCreditRows.map((r) => [
+      `"${r.customerName}"`,
+      `"${r.phone || ""}"`,
+      r.totalNotes,
+      r.totalCreditAmount,
+      r.totalApplied,
+      r.totalRefunded,
+      r.currentCreditBalance,
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `customer_credit_balance_${todayISO()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportDealerCreditCSV = () => {
+    if (dealerCreditRows.length === 0) return;
+    const headers = [
+      "Dealer Name",
+      "Mobile / Phone",
+      "Total Debit Notes Raised",
+      "Total Debit Amount",
+      "Total Used / Adjusted",
+      "Total Refunded",
+      "Current Available Debit Balance",
+    ];
+    const rows = dealerCreditRows.map((r) => [
+      `"${r.dealerName}"`,
+      `"${r.phone || ""}"`,
+      r.totalNotes,
+      r.totalDebitAmount,
+      r.totalApplied,
+      r.totalRefunded,
+      r.currentCreditBalance,
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `dealer_credit_balance_${todayISO()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -386,13 +674,53 @@ function ReportsPage() {
         </button>
         <button
           onClick={() => setActiveTab("gst")}
-          className={`px-4 py-2 border-b-2 transition-colors ${
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "gst"
               ? "border-primary text-primary"
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
         >
           GST & TDS 194R Analytics
+        </button>
+        <button
+          onClick={() => setActiveTab("credit_notes")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === "credit_notes"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Credit Notes Report
+        </button>
+        <button
+          onClick={() => setActiveTab("debit_notes")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === "debit_notes"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Debit Notes Report
+        </button>
+        <button
+          onClick={() => setActiveTab("customer_credit")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === "customer_credit"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Customer Credit Balances
+        </button>
+        <button
+          onClick={() => setActiveTab("dealer_credit")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === "dealer_credit"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Dealer Credit Balances
         </button>
       </div>
 
@@ -1141,6 +1469,259 @@ function ReportsPage() {
               )}
             </Card>
           </div>
+        </div>
+      )}
+
+      {activeTab === "credit_notes" && (
+        <div className="space-y-4">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <Stat label="Total Notes" value={cnSummary?.totalNotes ?? cnRows.length} />
+            <Stat label="Total Credit Amount" value={inr(cnSummary?.totalAmount ?? 0)} />
+            <Stat label="Total Adjusted" value={inr(cnSummary?.totalApplied ?? 0)} tone="success" />
+            <Stat label="Total Refunded" value={inr(cnSummary?.totalRefunded ?? 0)} tone="warning" />
+            <Stat label="Outstanding Credit" value={inr(cnSummary?.totalRemaining ?? 0)} />
+          </section>
+
+          <Card>
+            <CardHead
+              title="Credit Notes Register"
+              sub="Detailed audit of all sales credit notes, taxes & balances"
+              actions={
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Input
+                    type="date"
+                    className="w-36 text-xs"
+                    value={cnStartDate}
+                    onChange={(e) => setCnStartDate(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    className="w-36 text-xs"
+                    value={cnEndDate}
+                    onChange={(e) => setCnEndDate(e.target.value)}
+                  />
+                  <Select
+                    className="text-xs w-32"
+                    value={cnStatus}
+                    onChange={(e) => setCnStatus(e.target.value)}
+                  >
+                    <option value="ALL">All Status</option>
+                    <option value="ISSUED">Issued</option>
+                    <option value="PARTIALLY_ADJUSTED">Partially Adjusted</option>
+                    <option value="FULLY_ADJUSTED">Fully Adjusted</option>
+                    <option value="REFUNDED">Refunded</option>
+                    <option value="CANCELLED">Cancelled</option>
+                  </Select>
+                  <Button variant="outline" size="sm" onClick={exportCreditNotesCSV} disabled={cnRows.length === 0}>
+                    Export CSV
+                  </Button>
+                </div>
+              }
+            />
+
+            {loadingCn ? (
+              <div className="py-8 text-center text-muted-foreground text-xs">Loading Credit Notes Report...</div>
+            ) : cnRows.length === 0 ? (
+              <Empty text="No credit notes found for the selected period." />
+            ) : (
+              <Table head={["Date", "Note #", "Orig Inv #", "Customer", "Type", "Items", ">Subtotal", ">Tax", ">Total", ">Adjusted", ">Refunded", ">Remaining", "Status"]}>
+                {cnRows.map((r, idx) => (
+                  <Row key={idx}>
+                    <Td>{r.date}</Td>
+                    <Td mono className="font-bold text-blue-700">{r.noteNumber}</Td>
+                    <Td mono>{r.originalInvoiceNo || "—"}</Td>
+                    <Td>
+                      <div className="font-medium">{r.customerName}</div>
+                      {r.customerPhone && <div className="text-[10px] text-muted-foreground">{r.customerPhone}</div>}
+                    </Td>
+                    <Td>
+                      <Badge tone={r.physicalReturn ? "info" : "neutral"}>
+                        {r.physicalReturn ? "Physical" : "Financial"}
+                      </Badge>
+                    </Td>
+                    <Td className="text-xs max-w-[120px] truncate" title={r.itemsSummary}>{r.itemsSummary || "—"}</Td>
+                    <Td right mono>{inr(r.subtotal)}</Td>
+                    <Td right mono>{inr(r.cgst + r.sgst + r.igst)}</Td>
+                    <Td right mono className="font-bold text-foreground">{inr(r.total)}</Td>
+                    <Td right mono className="text-emerald-600 font-medium">{inr(r.appliedAmount)}</Td>
+                    <Td right mono className="text-amber-600 font-medium">{inr(r.refundedAmount)}</Td>
+                    <Td right mono className="font-bold text-primary">{inr(r.remainingAmount)}</Td>
+                    <Td>
+                      <Badge tone={r.status === "CANCELLED" ? "danger" : r.status === "FULLY_ADJUSTED" ? "success" : "neutral"}>
+                        {r.status}
+                      </Badge>
+                    </Td>
+                  </Row>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "debit_notes" && (
+        <div className="space-y-4">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <Stat label="Total Debit Notes" value={dnSummary?.totalNotes ?? dnRows.length} />
+            <Stat label="Total Debit Amount" value={inr(dnSummary?.totalAmount ?? 0)} />
+            <Stat label="Total Adjusted" value={inr(dnSummary?.totalApplied ?? 0)} tone="success" />
+            <Stat label="Refunds Received" value={inr(dnSummary?.totalRefunded ?? 0)} tone="warning" />
+            <Stat label="Outstanding Balance" value={inr(dnSummary?.totalRemaining ?? 0)} />
+          </section>
+
+          <Card>
+            <CardHead
+              title="Debit Notes Register"
+              sub="Purchase returns, price discrepancies & supplier claims"
+              actions={
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Input
+                    type="date"
+                    className="w-36 text-xs"
+                    value={dnStartDate}
+                    onChange={(e) => setDnStartDate(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    className="w-36 text-xs"
+                    value={dnEndDate}
+                    onChange={(e) => setDnEndDate(e.target.value)}
+                  />
+                  <Select
+                    className="text-xs w-32"
+                    value={dnStatus}
+                    onChange={(e) => setDnStatus(e.target.value)}
+                  >
+                    <option value="ALL">All Status</option>
+                    <option value="ISSUED">Issued</option>
+                    <option value="PARTIALLY_ADJUSTED">Partially Adjusted</option>
+                    <option value="FULLY_ADJUSTED">Fully Adjusted</option>
+                    <option value="REFUNDED">Refunded</option>
+                    <option value="CANCELLED">Cancelled</option>
+                  </Select>
+                  <Button variant="outline" size="sm" onClick={exportDebitNotesCSV} disabled={dnRows.length === 0}>
+                    Export CSV
+                  </Button>
+                </div>
+              }
+            />
+
+            {loadingDn ? (
+              <div className="py-8 text-center text-muted-foreground text-xs">Loading Debit Notes Report...</div>
+            ) : dnRows.length === 0 ? (
+              <Empty text="No debit notes found for the selected period." />
+            ) : (
+              <Table head={["Date", "Note #", "Purchase Bill #", "Dealer", "Type", "Items", ">Subtotal", ">Tax", ">Total", ">Adjusted", ">Refund Recv", ">Remaining", "Status"]}>
+                {dnRows.map((r, idx) => (
+                  <Row key={idx}>
+                    <Td>{r.date}</Td>
+                    <Td mono className="font-bold text-indigo-700">{r.noteNumber}</Td>
+                    <Td mono>{r.originalInvoiceNo || "—"}</Td>
+                    <Td className="font-medium">{r.dealerName}</Td>
+                    <Td>
+                      <Badge tone={r.physicalReturn ? "info" : "neutral"}>
+                        {r.physicalReturn ? "Physical" : "Financial"}
+                      </Badge>
+                    </Td>
+                    <Td className="text-xs max-w-[120px] truncate" title={r.itemsSummary}>{r.itemsSummary || "—"}</Td>
+                    <Td right mono>{inr(r.subtotal)}</Td>
+                    <Td right mono>{inr(r.cgst + r.sgst + r.igst)}</Td>
+                    <Td right mono className="font-bold text-foreground">{inr(r.total)}</Td>
+                    <Td right mono className="text-emerald-600 font-medium">{inr(r.appliedAmount)}</Td>
+                    <Td right mono className="text-amber-600 font-medium">{inr(r.refundedAmount)}</Td>
+                    <Td right mono className="font-bold text-primary">{inr(r.remainingAmount)}</Td>
+                    <Td>
+                      <Badge tone={r.status === "CANCELLED" ? "danger" : r.status === "FULLY_ADJUSTED" ? "success" : "neutral"}>
+                        {r.status}
+                      </Badge>
+                    </Td>
+                  </Row>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "customer_credit" && (
+        <div className="space-y-4">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-2">
+            <Stat label="Customers with Outstanding Credit" value={custCreditSummary?.totalCustomersWithBalance ?? custCreditRows.length} />
+            <Stat label="Total Available Credit Balance" value={inr(custCreditSummary?.totalCreditBalance ?? 0)} />
+          </section>
+
+          <Card>
+            <CardHead
+              title="Customer Credit Balance Ledger"
+              sub="Active credit balances available for future purchase adjustment"
+              actions={
+                <Button variant="outline" size="sm" onClick={exportCustomerCreditCSV} disabled={custCreditRows.length === 0}>
+                  Export CSV
+                </Button>
+              }
+            />
+
+            {loadingCustCredit ? (
+              <div className="py-8 text-center text-muted-foreground text-xs">Loading Customer Credit Balances...</div>
+            ) : custCreditRows.length === 0 ? (
+              <Empty text="No customers with active credit balances." />
+            ) : (
+              <Table head={["Customer Name", "Mobile", ">Total Notes Issued", ">Total Credit Issued", ">Total Adjusted", ">Total Refunded", ">Current Credit Balance"]}>
+                {custCreditRows.map((r, idx) => (
+                  <Row key={idx}>
+                    <Td className="font-medium text-foreground">{r.customerName}</Td>
+                    <Td mono>{r.phone || "—"}</Td>
+                    <Td right>{r.totalNotes}</Td>
+                    <Td right mono className="font-semibold">{inr(r.totalCreditAmount)}</Td>
+                    <Td right mono className="text-emerald-600">{inr(r.totalApplied)}</Td>
+                    <Td right mono className="text-amber-600">{inr(r.totalRefunded)}</Td>
+                    <Td right mono className="font-bold text-primary text-sm">{inr(r.currentCreditBalance)}</Td>
+                  </Row>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "dealer_credit" && (
+        <div className="space-y-4">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-2">
+            <Stat label="Dealers with Available Debit Balance" value={dealerCreditSummary?.totalDealersWithBalance ?? dealerCreditRows.length} />
+            <Stat label="Total Pending Debit Balance" value={inr(dealerCreditSummary?.totalCreditBalance ?? 0)} />
+          </section>
+
+          <Card>
+            <CardHead
+              title="Dealer Debit Balance Ledger"
+              sub="Debit balances available to deduct against inward supplier bills"
+              actions={
+                <Button variant="outline" size="sm" onClick={exportDealerCreditCSV} disabled={dealerCreditRows.length === 0}>
+                  Export CSV
+                </Button>
+              }
+            />
+
+            {loadingDealerCredit ? (
+              <div className="py-8 text-center text-muted-foreground text-xs">Loading Dealer Debit Balances...</div>
+            ) : dealerCreditRows.length === 0 ? (
+              <Empty text="No dealers with active debit balances." />
+            ) : (
+              <Table head={["Dealer Name", "Mobile / Phone", ">Total Debit Notes Raised", ">Total Debit Amount", ">Total Adjusted in Bills", ">Total Refund Received", ">Current Debit Balance"]}>
+                {dealerCreditRows.map((r, idx) => (
+                  <Row key={idx}>
+                    <Td className="font-medium text-foreground">{r.dealerName}</Td>
+                    <Td mono>{r.phone || "—"}</Td>
+                    <Td right>{r.totalNotes}</Td>
+                    <Td right mono className="font-semibold">{inr(r.totalDebitAmount)}</Td>
+                    <Td right mono className="text-emerald-600">{inr(r.totalApplied)}</Td>
+                    <Td right mono className="text-amber-600">{inr(r.totalRefunded)}</Td>
+                    <Td right mono className="font-bold text-primary text-sm">{inr(r.currentCreditBalance)}</Td>
+                  </Row>
+                ))}
+              </Table>
+            )}
+          </Card>
         </div>
       )}
 

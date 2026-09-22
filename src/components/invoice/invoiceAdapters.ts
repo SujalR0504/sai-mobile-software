@@ -1,4 +1,4 @@
-import type { AppDatabase, Sale, Purchase, DebitNote, ReturnDoc } from "../../lib/types";
+import type { AppDatabase, Sale, Purchase, DebitNote, CreditNote, ReturnDoc } from "../../lib/types";
 import type { InvoiceDocumentProps } from "./InvoiceDocument";
 import { numberToIndianWords } from "../../lib/format";
 
@@ -197,13 +197,130 @@ export function purchaseToInvoiceProps(purchase: Purchase, db: AppDatabase): Inv
   };
 }
 
+export function creditNoteToInvoiceProps(creditNote: CreditNote, db: AppDatabase): InvoiceDocumentProps {
+  const customer = db.customers.find((c) => c.id === creditNote.customerId);
+  const isNonGst = creditNote.invoiceType === "NON_GST" || (creditNote.cgst === 0 && creditNote.sgst === 0 && creditNote.igst === 0);
+
+  const items = (creditNote.items || []).map((it, idx) => {
+    const totalAmount = it.totalAmount ?? (it.rate * it.qty);
+    const taxableAmount = it.taxableAmount ?? (it.rate * it.qty);
+    const gstRate = isNonGst ? 0 : (it.gstRate || 0);
+
+    return {
+      srNo: idx + 1,
+      name: it.productName || "Item",
+      hsnSac: "8517",
+      imeis: it.imei ? [it.imei] : [],
+      imei: it.imei,
+      qty: it.qty,
+      unit: "NOS",
+      rateExclTax: taxableAmount / (it.qty || 1),
+      rateInclTax: it.rate,
+      taxableAmount,
+      gstRate,
+      cgstPct: isNonGst ? 0 : (it.cgstPct || gstRate / 2),
+      cgstAmount: isNonGst ? 0 : (it.cgstAmount || 0),
+      sgstPct: isNonGst ? 0 : (it.sgstPct || gstRate / 2),
+      sgstAmount: isNonGst ? 0 : (it.sgstAmount || 0),
+      igstPct: isNonGst ? 0 : (it.igstPct || 0),
+      igstAmount: isNonGst ? 0 : (it.igstAmount || 0),
+      totalAmount,
+    };
+  });
+
+  return {
+    type: "CREDIT_NOTE",
+    settings: db.settings,
+    templateId: "template_modern",
+    copyType: "ORIGINAL FOR RECIPIENT",
+    invoiceNo: creditNote.noteNumber,
+    invoiceDate: creditNote.date,
+    originalInvoiceNo: creditNote.originalInvoiceNo,
+    originalInvoiceDate: creditNote.originalInvoiceDate,
+    placeOfSupply: db.settings.state || "Madhya Pradesh",
+    stateCode: db.settings.stateCode || "23",
+    remarks: creditNote.reason ? `Reason: ${creditNote.reason}${creditNote.notes ? ` (${creditNote.notes})` : ""}` : undefined,
+    party: {
+      name: customer?.name || "Cash Customer",
+      phone: customer?.phone && customer.phone !== "—" ? customer.phone : "",
+      mobile: customer?.phone && customer.phone !== "—" ? customer.phone : "",
+      address: customer?.address || "",
+      city: customer?.city || db.settings.city || "Harda",
+      state: customer?.state || db.settings.state || "Madhya Pradesh",
+      stateCode: customer?.stateCode || db.settings.stateCode || "23",
+      gstin: customer?.gstin || "",
+      isUnregistered: !customer?.gstin,
+    },
+    items: items.length > 0 ? items : [
+      {
+        srNo: 1,
+        name: `Credit Note: ${creditNote.reason}`,
+        qty: 1,
+        unit: "NOS",
+        rateExclTax: creditNote.subtotal,
+        rateInclTax: creditNote.total,
+        taxableAmount: creditNote.subtotal,
+        gstRate: 0,
+        totalAmount: creditNote.total,
+      },
+    ],
+    totals: {
+      totalQty: items.length > 0 ? items.reduce((s, i) => s + i.qty, 0) : 1,
+      grossAmount: creditNote.subtotal,
+      subtotal: creditNote.subtotal,
+      taxableValue: creditNote.subtotal,
+      cgstAmount: creditNote.cgst || 0,
+      sgstAmount: creditNote.sgst || 0,
+      igstAmount: creditNote.igst || 0,
+      grandTotal: creditNote.total,
+      amountInWords: numberToIndianWords(creditNote.total),
+    },
+    payment: {
+      mode: creditNote.adjustmentType === "REFUND" ? "Refund" : creditNote.adjustmentType === "INVOICE_ADJUSTMENT" ? "Invoice Adjustment" : "Customer Credit Balance",
+      paid: (creditNote.appliedAmount ?? 0) + (creditNote.refundedAmount ?? 0),
+      due: creditNote.remainingAmount ?? 0,
+    },
+    watermarkEnabled: db.settings.watermarkEnabled !== false,
+  };
+}
+
 export function debitNoteToInvoiceProps(debitNote: DebitNote, db: AppDatabase): InvoiceDocumentProps {
   const dealer = db.suppliers.find(
     (s) => s.id === (debitNote.dealerId || debitNote.supplierId)
   );
+  const isNonGst = debitNote.invoiceType === "NON_GST" || (debitNote.cgst === 0 && debitNote.sgst === 0 && debitNote.igst === 0);
+  const total = debitNote.total ?? debitNote.amount;
+  const subtotal = debitNote.subtotal ?? debitNote.amount;
+
+  const items = (debitNote.items || []).map((it, idx) => {
+    const totalAmount = it.totalAmount ?? (it.rate * it.qty);
+    const taxableAmount = it.taxableAmount ?? (it.rate * it.qty);
+    const gstRate = isNonGst ? 0 : (it.gstRate || 0);
+
+    return {
+      srNo: idx + 1,
+      name: it.productName || "Item",
+      hsnSac: "8517",
+      imeis: it.imei ? [it.imei] : [],
+      imei: it.imei,
+      qty: it.qty,
+      unit: "NOS",
+      rateExclTax: taxableAmount / (it.qty || 1),
+      rateInclTax: it.rate,
+      taxableAmount,
+      gstRate,
+      cgstPct: isNonGst ? 0 : (it.cgstPct || gstRate / 2),
+      cgstAmount: isNonGst ? 0 : (it.cgstAmount || 0),
+      sgstPct: isNonGst ? 0 : (it.sgstPct || gstRate / 2),
+      sgstAmount: isNonGst ? 0 : (it.sgstAmount || 0),
+      igstPct: isNonGst ? 0 : (it.igstPct || 0),
+      igstAmount: isNonGst ? 0 : (it.igstAmount || 0),
+      totalAmount,
+    };
+  });
 
   return {
-    type: "PURCHASE_RETURN", // Debit Note / TDS 194R
+    type: "DEBIT_NOTE",
     settings: db.settings,
     copyType: "ORIGINAL FOR RECIPIENT",
     invoiceNo: debitNote.noteNumber,
@@ -212,7 +329,7 @@ export function debitNoteToInvoiceProps(debitNote: DebitNote, db: AppDatabase): 
     originalInvoiceDate: debitNote.originalInvoiceDate,
     placeOfSupply: dealer?.state || db.settings.state || "Madhya Pradesh",
     stateCode: dealer?.stateCode || db.settings.stateCode || "23",
-    remarks: debitNote.notes || debitNote.reason,
+    remarks: debitNote.notes ? `${debitNote.reason}: ${debitNote.notes}` : debitNote.reason,
     party: {
       name: dealer?.name || "Dealer / Distributor",
       phone: dealer?.phone || "",
@@ -224,32 +341,35 @@ export function debitNoteToInvoiceProps(debitNote: DebitNote, db: AppDatabase): 
       gstin: dealer?.gstin || "",
       isUnregistered: !dealer?.gstin,
     },
-    items: [
+    items: items.length > 0 ? items : [
       {
         srNo: 1,
         name: `Debit Note: ${debitNote.reason}${debitNote.section ? ` (${debitNote.section})` : ""}`,
         hsnSac: "9983",
         qty: 1,
         unit: "NOS",
-        rateExclTax: debitNote.amount,
-        rateInclTax: debitNote.amount,
-        taxableAmount: debitNote.taxableValue || debitNote.amount,
+        rateExclTax: subtotal,
+        rateInclTax: total,
+        taxableAmount: debitNote.taxableValue || subtotal,
         gstRate: debitNote.ratePct || debitNote.tdsRate || 0,
-        totalAmount: debitNote.amount,
+        totalAmount: total,
       },
     ],
     totals: {
-      totalQty: 1,
-      subtotal: debitNote.amount,
-      taxableValue: debitNote.taxableValue || debitNote.amount,
-      grandTotal: debitNote.amount,
+      totalQty: items.length > 0 ? items.reduce((s, i) => s + i.qty, 0) : 1,
+      subtotal,
+      taxableValue: debitNote.taxableValue || subtotal,
+      cgstAmount: debitNote.cgst || 0,
+      sgstAmount: debitNote.sgst || 0,
+      igstAmount: debitNote.igst || 0,
+      grandTotal: total,
       tdsAmount: debitNote.tdsAmount || 0,
-      amountInWords: numberToIndianWords(debitNote.amount),
+      amountInWords: numberToIndianWords(total),
     },
     payment: {
-      mode: "Debit Note Adjustment",
-      paid: debitNote.amount,
-      due: 0,
+      mode: debitNote.adjustmentType === "REFUND" ? "Refund Inflow" : debitNote.adjustmentType === "PURCHASE_ADJUSTMENT" ? "Purchase Bill Adjustment" : "Dealer Credit Balance",
+      paid: (debitNote.appliedAmount ?? 0) + (debitNote.refundedAmount ?? 0),
+      due: debitNote.remainingAmount ?? 0,
     },
     watermarkEnabled: db.settings.watermarkEnabled !== false,
   };

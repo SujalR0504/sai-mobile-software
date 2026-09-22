@@ -24,8 +24,8 @@ export function recordStockMovement(db: DatabaseSync, input: RecordMovementInput
   const now = new Date().toISOString();
 
   const stmt = db.prepare(`
-    INSERT INTO stock_movements (id, business_id, branch_id, product_id, product_name, unit_id, imei, movement_type, quantity, cost_per_unit, reference_id, notes, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO stock_movements (id, business_id, branch_id, product_id, product_name, unit_id, imei, movement_type, quantity, qty, cost_per_unit, reference_id, notes, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -37,6 +37,7 @@ export function recordStockMovement(db: DatabaseSync, input: RecordMovementInput
     input.unitId ?? null,
     input.imei ?? null,
     input.movementType,
+    input.quantity,
     input.quantity,
     input.costPerUnit,
     input.referenceId ?? null,

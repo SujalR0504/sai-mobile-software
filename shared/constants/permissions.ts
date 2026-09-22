@@ -5,6 +5,8 @@ export const PERMISSION_MODULES = [
   "Purchases",
   "Sale Returns",
   "Purchase Returns",
+  "Credit Notes",
+  "Debit Notes",
   "Products",
   "Stock",
   "IMEI",

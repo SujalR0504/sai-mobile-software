@@ -299,6 +299,131 @@ export function generateEMIPlanWhatsAppMessage(params: {
 }
 
 /**
+ * Generates WhatsApp message for Credit Note.
+ */
+export function generateCreditNoteWhatsAppMessage(params: {
+  customerName: string;
+  noteNumber: string;
+  date: string;
+  originalInvoiceNo?: string;
+  reason?: string;
+  total: number;
+  appliedAmount?: number;
+  refundedAmount?: number;
+  remainingAmount?: number;
+  status: string;
+  items?: Array<{ name: string; qty: number; rate: number }>;
+  shopName?: string;
+}): string {
+  const shop = params.shopName || "SHRI SAI MOBILE";
+  const lines = [
+    `*${shop}*`,
+    "Mobile Phones & Electronics | Official Store",
+    "--------------------------------------------------",
+    `Dear ${params.customerName},`,
+    "",
+    "A Credit Note has been issued for your account:",
+    "",
+    `📄 *Credit Note No:* ${params.noteNumber}`,
+    `📅 *Date:* ${params.date}`,
+  ];
+
+  if (params.originalInvoiceNo) {
+    lines.push(`📑 *Against Invoice:* ${params.originalInvoiceNo}`);
+  }
+  if (params.reason) {
+    lines.push(`📝 *Reason:* ${params.reason}`);
+  }
+
+  if (params.items && params.items.length > 0) {
+    lines.push("");
+    lines.push("*Items:*");
+    params.items.forEach((it, idx) => {
+      lines.push(`${idx + 1}. ${it.name} (Qty: ${it.qty}) - ${inr(it.rate)}`);
+    });
+  }
+
+  lines.push("");
+  lines.push(`💰 *Total Credit Amount:* ${inr(params.total)}`);
+  if ((params.refundedAmount ?? 0) > 0) {
+    lines.push(`💵 *Refunded Amount:* ${inr(params.refundedAmount!)}`);
+  }
+  if ((params.appliedAmount ?? 0) > 0) {
+    lines.push(`🔄 *Adjusted in Invoices:* ${inr(params.appliedAmount!)}`);
+  }
+  lines.push(`💎 *Available Credit Balance:* ${inr(params.remainingAmount ?? 0)}`);
+  lines.push(`📌 *Status:* ${params.status}`);
+  lines.push("");
+  lines.push("You can utilize this credit balance towards your future purchases.");
+  lines.push("Thank you for shopping with Shri Sai Mobile!");
+  lines.push("NO NEED TO WORRY");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generates WhatsApp message for Debit Note.
+ */
+export function generateDebitNoteWhatsAppMessage(params: {
+  dealerName: string;
+  noteNumber: string;
+  date: string;
+  originalInvoiceNo?: string;
+  reason?: string;
+  total: number;
+  appliedAmount?: number;
+  refundedAmount?: number;
+  remainingAmount?: number;
+  status: string;
+  items?: Array<{ name: string; qty: number; rate: number }>;
+  shopName?: string;
+}): string {
+  const shop = params.shopName || "SHRI SAI MOBILE";
+  const lines = [
+    `*${shop}*`,
+    "Dealer / Supplier Notice",
+    "--------------------------------------------------",
+    `Dear ${params.dealerName},`,
+    "",
+    "A Debit Note has been raised against your account:",
+    "",
+    `📄 *Debit Note No:* ${params.noteNumber}`,
+    `📅 *Date:* ${params.date}`,
+  ];
+
+  if (params.originalInvoiceNo) {
+    lines.push(`📑 *Original Purchase Bill:* ${params.originalInvoiceNo}`);
+  }
+  if (params.reason) {
+    lines.push(`📝 *Reason:* ${params.reason}`);
+  }
+
+  if (params.items && params.items.length > 0) {
+    lines.push("");
+    lines.push("*Items Returned/Adjusted:*");
+    params.items.forEach((it, idx) => {
+      lines.push(`${idx + 1}. ${it.name} (Qty: ${it.qty}) - ${inr(it.rate)}`);
+    });
+  }
+
+  lines.push("");
+  lines.push(`💰 *Total Debit Note Amount:* ${inr(params.total)}`);
+  if ((params.appliedAmount ?? 0) > 0) {
+    lines.push(`🔄 *Adjusted against Bill:* ${inr(params.appliedAmount!)}`);
+  }
+  if ((params.refundedAmount ?? 0) > 0) {
+    lines.push(`💵 *Refund Received:* ${inr(params.refundedAmount!)}`);
+  }
+  lines.push(`📌 *Balance Due/Pending:* ${inr(params.remainingAmount ?? 0)}`);
+  lines.push(`📌 *Status:* ${params.status}`);
+  lines.push("");
+  lines.push("Please update your ledger records accordingly.");
+  lines.push("Shri Sai Mobile");
+
+  return lines.join("\n");
+}
+
+/**
  * Dispatches WhatsApp message with validation and audit logging.
  * Polymorphic: accepts either (phone, message, options) OR ({ phone, message, ... }).
  */

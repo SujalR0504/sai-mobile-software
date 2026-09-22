@@ -32,6 +32,7 @@ import type {
   SupplierLedgerEntry,
   Unit,
   UnitStatus,
+  CreditNote,
   DebitNote,
   PurchaseAttachment,
   PaymentAccount,
@@ -756,32 +757,169 @@ export function deletePurchaseAttachment(db: DatabaseSync, id: string): void {
   db.prepare("DELETE FROM purchase_attachments WHERE id = ?").run(id);
 }
 
+export function getCreditNotes(db: DatabaseSync, customerId?: string): CreditNote[] {
+  try {
+    const query = customerId
+      ? `SELECT cn.*, c.name as customer_name, c.phone as customer_phone
+         FROM credit_notes cn
+         JOIN customers c ON cn.customer_id = c.id
+         WHERE cn.customer_id = ?
+         ORDER BY cn.date DESC, cn.created_at DESC`
+      : `SELECT cn.*, c.name as customer_name, c.phone as customer_phone
+         FROM credit_notes cn
+         JOIN customers c ON cn.customer_id = c.id
+         ORDER BY cn.date DESC, cn.created_at DESC`;
+    const rows = (customerId ? db.prepare(query).all(customerId) : db.prepare(query).all()) as any[];
+
+    return rows.map((r) => {
+      const items = db
+        .prepare("SELECT * FROM credit_note_items WHERE credit_note_id = ?")
+        .all(r.id) as any[];
+
+      return {
+        id: r.id,
+        businessId: r.business_id,
+        branchId: r.branch_id,
+        creditNoteNo: r.credit_note_no,
+        noteNumber: r.credit_note_no,
+        date: r.date,
+        customerId: r.customer_id,
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone,
+        saleId: r.sale_id ?? undefined,
+        originalInvoiceNo: r.original_invoice_no ?? undefined,
+        originalInvoiceDate: r.original_invoice_date ?? undefined,
+        reason: r.reason,
+        notes: r.notes ?? undefined,
+        invoiceType: r.invoice_type || "GST",
+        subtotal: r.subtotal || 0,
+        tax: r.tax || 0,
+        cgst: r.cgst || 0,
+        sgst: r.sgst || 0,
+        igst: r.igst || 0,
+        total: r.total || 0,
+        amount: r.total || 0,
+        refundedAmount: r.refunded_amount || 0,
+        appliedAmount: r.applied_amount || 0,
+        remainingAmount: r.remaining_amount || 0,
+        physicalReturn: Boolean(r.physical_return),
+        adjustmentType: r.adjustment_type || "CUSTOMER_CREDIT",
+        status: r.status || "ISSUED",
+        returnId: r.return_id ?? undefined,
+        createdBy: r.created_by ?? undefined,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at ?? undefined,
+        items: items.map((i) => ({
+          id: i.id,
+          creditNoteId: i.credit_note_id,
+          productId: i.product_id,
+          unitId: i.unit_id ?? undefined,
+          imei: i.imei ?? undefined,
+          name: i.name,
+          qty: i.qty,
+          rate: i.rate,
+          discount: i.discount || 0,
+          taxableAmount: i.taxable_amount,
+          gstRate: i.gst_rate,
+          taxAmount: i.tax_amount,
+          total: i.total,
+          physicalReturn: Boolean(i.physical_return),
+        })),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function getDebitNotes(db: DatabaseSync, dealerId?: string): DebitNote[] {
-  const query = dealerId
-    ? "SELECT * FROM debit_notes WHERE dealer_id = ? ORDER BY date DESC, created_at DESC"
-    : "SELECT * FROM debit_notes ORDER BY date DESC, created_at DESC";
-  const rows = (dealerId ? db.prepare(query).all(dealerId) : db.prepare(query).all()) as any[];
-  return rows.map((r) => ({
-    id: r.id,
-    businessId: r.business_id,
-    noteNumber: r.debit_note_no,
-    date: r.date,
-    supplierId: r.dealer_id,
-    dealerId: r.dealer_id,
-    originalInvoiceNo: r.original_invoice_no ?? undefined,
-    originalInvoiceDate: r.original_invoice_date ?? undefined,
-    section: r.tds_section ?? undefined,
-    tdsSection: r.tds_section ?? undefined,
-    ratePct: r.tds_rate ?? undefined,
-    tdsRate: r.tds_rate ?? undefined,
-    tdsAmount: r.tds_amount ?? undefined,
-    taxableValue: r.taxable_value ?? undefined,
-    amount: r.amount,
-    reason: r.reason,
-    status: "ACTIVE",
-    notes: r.remarks ?? undefined,
-    createdAt: r.created_at,
-  }));
+  try {
+    const query = dealerId
+      ? `SELECT dn.*, s.name as dealer_name, s.phone as dealer_phone
+         FROM debit_notes dn
+         JOIN suppliers s ON dn.dealer_id = s.id
+         WHERE dn.dealer_id = ?
+         ORDER BY dn.date DESC, dn.created_at DESC`
+      : `SELECT dn.*, s.name as dealer_name, s.phone as dealer_phone
+         FROM debit_notes dn
+         JOIN suppliers s ON dn.dealer_id = s.id
+         ORDER BY dn.date DESC, dn.created_at DESC`;
+    const rows = (dealerId ? db.prepare(query).all(dealerId) : db.prepare(query).all()) as any[];
+
+    return rows.map((r) => {
+      let items: any[] = [];
+      try {
+        items = db
+          .prepare("SELECT * FROM debit_note_items WHERE debit_note_id = ?")
+          .all(r.id) as any[];
+      } catch {
+        items = [];
+      }
+
+      return {
+        id: r.id,
+        businessId: r.business_id,
+        branchId: r.branch_id,
+        debitNoteNo: r.debit_note_no,
+        noteNumber: r.debit_note_no,
+        date: r.date,
+        supplierId: r.dealer_id,
+        dealerId: r.dealer_id,
+        dealerName: r.dealer_name,
+        dealerPhone: r.dealer_phone,
+        purchaseId: r.purchase_id ?? undefined,
+        originalInvoiceNo: r.original_invoice_no ?? undefined,
+        originalInvoiceDate: r.original_invoice_date ?? undefined,
+        reason: r.reason,
+        notes: r.remarks ?? undefined,
+        remarks: r.remarks ?? undefined,
+        invoiceType: r.invoice_type || "GST",
+        subtotal: r.subtotal !== undefined ? r.subtotal : r.amount,
+        tax: r.tax || 0,
+        cgst: r.cgst || 0,
+        sgst: r.sgst || 0,
+        igst: r.igst || 0,
+        total: r.total !== undefined ? r.total : r.amount,
+        amount: r.amount,
+        taxableValue: r.taxable_value !== undefined ? r.taxable_value : r.amount,
+        refundedAmount: r.refunded_amount || 0,
+        appliedAmount: r.applied_amount || 0,
+        remainingAmount: r.remaining_amount !== undefined ? r.remaining_amount : r.amount,
+        physicalReturn: Boolean(r.physical_return),
+        adjustmentType: r.adjustment_type || "DEALER_CREDIT",
+        status: r.status || "ACTIVE",
+        section: r.tds_section ?? undefined,
+        tdsSection: r.tds_section ?? undefined,
+        ratePct: r.tds_rate ?? undefined,
+        tdsRate: r.tds_rate ?? undefined,
+        tdsAmount: r.tds_amount ?? undefined,
+        otherCharges: r.other_charges ?? undefined,
+        adjustmentAmount: r.adjustment_amount ?? undefined,
+        returnId: r.return_id ?? undefined,
+        createdBy: r.created_by ?? undefined,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at ?? undefined,
+        items: items.map((i) => ({
+          id: i.id,
+          debitNoteId: i.debit_note_id,
+          productId: i.product_id,
+          unitId: i.unit_id ?? undefined,
+          imei: i.imei ?? undefined,
+          name: i.name,
+          qty: i.qty,
+          rate: i.rate,
+          discount: i.discount || 0,
+          taxableAmount: i.taxable_amount,
+          gstRate: i.gst_rate,
+          taxAmount: i.tax_amount,
+          total: i.total,
+          physicalReturn: Boolean(i.physical_return),
+        })),
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 export function getFullDB(db: DatabaseSync): DB {
@@ -793,6 +931,7 @@ export function getFullDB(db: DatabaseSync): DB {
     sales: getSales(db),
     purchases: getPurchases(db),
     purchaseAttachments: getPurchaseAttachments(db),
+    creditNotes: getCreditNotes(db),
     debitNotes: getDebitNotes(db),
     returns: getReturns(db),
     repairs: getRepairs(db),

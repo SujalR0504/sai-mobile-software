@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AttendanceRouteImport } from './routes/attendance'
 import { Route as CashbookRouteImport } from './routes/cashbook'
+import { Route as CreditNotesRouteImport } from './routes/credit-notes'
 import { Route as CustomersRouteImport } from './routes/customers'
+import { Route as DebitNotesRouteImport } from './routes/debit-notes'
 import { Route as EmiRouteImport } from './routes/emi'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
@@ -46,9 +48,19 @@ const CashbookRoute = CashbookRouteImport.update({
   path: '/cashbook',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CreditNotesRoute = CreditNotesRouteImport.update({
+  id: '/credit-notes',
+  path: '/credit-notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CustomersRoute = CustomersRouteImport.update({
   id: '/customers',
   path: '/customers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DebitNotesRoute = DebitNotesRouteImport.update({
+  id: '/debit-notes',
+  path: '/debit-notes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EmiRoute = EmiRouteImport.update({
@@ -141,7 +153,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/attendance': typeof AttendanceRoute
   '/cashbook': typeof CashbookRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/customers': typeof CustomersRoute
+  '/debit-notes': typeof DebitNotesRoute
   '/emi': typeof EmiRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -164,7 +178,9 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/attendance': typeof AttendanceRoute
   '/cashbook': typeof CashbookRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/customers': typeof CustomersRoute
+  '/debit-notes': typeof DebitNotesRoute
   '/emi': typeof EmiRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -188,7 +204,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/attendance': typeof AttendanceRoute
   '/cashbook': typeof CashbookRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/customers': typeof CustomersRoute
+  '/debit-notes': typeof DebitNotesRoute
   '/emi': typeof EmiRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -213,7 +231,9 @@ export interface FileRouteTypes {
     | '/'
     | '/attendance'
     | '/cashbook'
+    | '/credit-notes'
     | '/customers'
+    | '/debit-notes'
     | '/emi'
     | '/employees'
     | '/expenses'
@@ -236,7 +256,9 @@ export interface FileRouteTypes {
     | '/'
     | '/attendance'
     | '/cashbook'
+    | '/credit-notes'
     | '/customers'
+    | '/debit-notes'
     | '/emi'
     | '/employees'
     | '/expenses'
@@ -259,7 +281,9 @@ export interface FileRouteTypes {
     | '/'
     | '/attendance'
     | '/cashbook'
+    | '/credit-notes'
     | '/customers'
+    | '/debit-notes'
     | '/emi'
     | '/employees'
     | '/expenses'
@@ -283,7 +307,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AttendanceRoute: typeof AttendanceRoute
   CashbookRoute: typeof CashbookRoute
+  CreditNotesRoute: typeof CreditNotesRoute
   CustomersRoute: typeof CustomersRoute
+  DebitNotesRoute: typeof DebitNotesRoute
   EmiRoute: typeof EmiRoute
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
@@ -326,11 +352,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CashbookRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/credit-notes': {
+      id: '/credit-notes'
+      path: '/credit-notes'
+      fullPath: '/credit-notes'
+      preLoaderRoute: typeof CreditNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/customers': {
       id: '/customers'
       path: '/customers'
       fullPath: '/customers'
       preLoaderRoute: typeof CustomersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/debit-notes': {
+      id: '/debit-notes'
+      path: '/debit-notes'
+      fullPath: '/debit-notes'
+      preLoaderRoute: typeof DebitNotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/emi': {
@@ -459,7 +499,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AttendanceRoute: AttendanceRoute,
   CashbookRoute: CashbookRoute,
+  CreditNotesRoute: CreditNotesRoute,
   CustomersRoute: CustomersRoute,
+  DebitNotesRoute: DebitNotesRoute,
   EmiRoute: EmiRoute,
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
