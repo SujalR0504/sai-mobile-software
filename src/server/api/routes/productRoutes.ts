@@ -1,6 +1,6 @@
 import { getProducts } from "../../db/repository";
 import { checkEmployeePermission } from "../../services/permissionService";
-import { addProduct, addUnits, updateProduct } from "../../services/stockService";
+import { addProduct, addUnits, deleteProduct, updateProduct } from "../../services/stockService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function productRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
@@ -55,6 +55,22 @@ export async function productRoutes({ request, url, pathname, method, db }: Rout
     if (method === "PATCH") {
       const body = await request.json();
       return jsonResponse(updateProduct(db, id, body));
+    }
+    if (method === "DELETE") {
+      const empId = request.headers.get("x-employee-id");
+      if (empId) {
+        const allowed = checkEmployeePermission(db, empId, "Products", "DELETE");
+        if (!allowed) {
+          return jsonResponse({ error: "Unauthorized: Missing PRODUCT_DELETE permission", success: false }, 403);
+        }
+      }
+      const force = url.searchParams.get("force") === "true";
+      try {
+        const result = deleteProduct(db, id, force);
+        return jsonResponse(result);
+      } catch (err: any) {
+        return errorResponse(err.message || "Failed to delete product", 400);
+      }
     }
   }
 

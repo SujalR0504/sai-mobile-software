@@ -250,9 +250,11 @@ export interface CategoryEntity {
   id: string;
   businessId?: string;
   name: string;
+  slug?: string;
   description?: string;
   icon?: string;
   sortOrder?: number;
+  active?: boolean;
   createdAt?: string;
 }
 
@@ -261,16 +263,22 @@ export interface SubcategoryEntity {
   businessId?: string;
   categoryId: string;
   name: string;
+  slug?: string;
   description?: string;
+  active?: boolean;
   createdAt?: string;
 }
 
 export interface BrandEntity {
   id: string;
   businessId?: string;
+  categoryId?: string;
   subcategoryId?: string;
   name: string;
+  slug?: string;
   logo?: string;
+  logoUrl?: string;
+  active?: boolean;
   createdAt?: string;
 }
 
@@ -278,9 +286,34 @@ export interface ModelEntity {
   id: string;
   businessId?: string;
   brandId: string;
+  categoryId?: string;
+  subcategoryId?: string;
   name: string;
+  modelNumber?: string;
+  releaseYear?: number;
   series?: string;
+  active?: boolean;
   createdAt?: string;
+}
+
+export interface ProductVariant {
+  id: string;
+  businessId?: string;
+  productId: string;
+  modelId?: string;
+  sku?: string;
+  barcode?: string;
+  ram?: string;
+  storage?: string;
+  color?: string;
+  mrp: number;
+  purchasePrice: number;
+  sellingPrice: number;
+  gst: number;
+  hsn?: string;
+  qty: number;
+  tracked: boolean;
+  createdAt: string;
 }
 
 export interface Product {
@@ -312,6 +345,7 @@ export interface Product {
   dealerId?: string;
   warrantyMonths: number;
   qty: number; // used for non-tracked items
+  openingStock?: number;
   reservedQty?: number;
   reorderLevel: number;
 }

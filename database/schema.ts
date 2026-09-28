@@ -614,6 +614,7 @@ export function initSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS brands (
       id TEXT PRIMARY KEY,
       business_id TEXT NOT NULL,
+      category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
       subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
       slug TEXT,
@@ -627,11 +628,33 @@ export function initSchema(db: DatabaseSync): void {
       id TEXT PRIMARY KEY,
       business_id TEXT NOT NULL,
       brand_id TEXT NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+      category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+      subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
       model_number TEXT,
       release_year INTEGER,
       series TEXT,
       active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS product_variants (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      sku TEXT,
+      barcode TEXT,
+      ram TEXT,
+      storage TEXT,
+      color TEXT,
+      mrp REAL NOT NULL,
+      purchase_price REAL NOT NULL,
+      selling_price REAL NOT NULL,
+      gst REAL NOT NULL,
+      hsn TEXT,
+      qty INTEGER NOT NULL DEFAULT 0,
+      tracked INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
 
@@ -884,6 +907,10 @@ export function runMigrations(db: DatabaseSync): void {
   addColumnIfNotExists(db, "products", "brand_id", "TEXT");
   addColumnIfNotExists(db, "products", "model_id", "TEXT");
 
+  addColumnIfNotExists(db, "brands", "category_id", "TEXT");
+  addColumnIfNotExists(db, "models", "category_id", "TEXT");
+  addColumnIfNotExists(db, "models", "subcategory_id", "TEXT");
+
   addColumnIfNotExists(db, "sales", "is_emi", "INTEGER DEFAULT 0");
   addColumnIfNotExists(db, "sales", "emi_company_id", "TEXT");
   addColumnIfNotExists(db, "sales", "emi_receivable_id", "TEXT");
@@ -1070,6 +1097,7 @@ export function runMigrations(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS brands (
       id TEXT PRIMARY KEY,
       business_id TEXT NOT NULL,
+      category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
       subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
       slug TEXT,
@@ -1083,11 +1111,33 @@ export function runMigrations(db: DatabaseSync): void {
       id TEXT PRIMARY KEY,
       business_id TEXT NOT NULL,
       brand_id TEXT NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+      category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+      subcategory_id TEXT REFERENCES subcategories(id) ON DELETE SET NULL,
       name TEXT NOT NULL,
       model_number TEXT,
       release_year INTEGER,
       series TEXT,
       active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS product_variants (
+      id TEXT PRIMARY KEY,
+      business_id TEXT NOT NULL,
+      product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      model_id TEXT REFERENCES models(id) ON DELETE SET NULL,
+      sku TEXT,
+      barcode TEXT,
+      ram TEXT,
+      storage TEXT,
+      color TEXT,
+      mrp REAL NOT NULL,
+      purchase_price REAL NOT NULL,
+      selling_price REAL NOT NULL,
+      gst REAL NOT NULL,
+      hsn TEXT,
+      qty INTEGER NOT NULL DEFAULT 0,
+      tracked INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
 
@@ -1964,14 +2014,12 @@ export function wipeAllData(db: DatabaseSync): void {
     DELETE FROM expenses;
     DELETE FROM payments;
     DELETE FROM units;
-    DELETE FROM products;
-    DELETE FROM models;
-    DELETE FROM brands;
-    DELETE FROM subcategories;
-    DELETE FROM categories;
-    DELETE FROM customers;
-    DELETE FROM suppliers;
+    UPDATE products SET qty = 0;
+    UPDATE product_variants SET qty = 0;
+    DELETE FROM customers WHERE id != 'c0';
+    DELETE FROM suppliers WHERE id LIKE 'sup_test_%' OR id LIKE 'sup_nqcf%' OR id LIKE 'dealer_pos%';
     DELETE FROM payment_account_transactions;
+    DELETE FROM payment_accounts WHERE id = 'acc_cash_test';
     UPDATE payment_accounts SET opening_balance = 0, current_balance = 0;
     CREATE TABLE IF NOT EXISTS app_flags (
       key TEXT PRIMARY KEY,

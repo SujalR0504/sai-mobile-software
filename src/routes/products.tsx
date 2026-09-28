@@ -19,6 +19,7 @@ import {
 import { stockOf, useStore } from "@/lib/store";
 import { inr } from "@/lib/format";
 import { CATEGORIES, type Category, type Product } from "@/lib/types";
+import { QuickProductModal } from "@/components/QuickProductModal";
 
 export const Route = createFileRoute("/products")({
   head: () => ({
@@ -28,12 +29,18 @@ export const Route = createFileRoute("/products")({
 });
 
 export function ProductsPage() {
-  const { db, addProduct, updateProduct, addUnits } = useStore();
+  const { db, addProduct, updateProduct, deleteProduct, addUnits } = useStore();
   const [activeTab, setActiveTab] = useState<"catalog" | "hierarchy">("catalog");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("All");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  // Product Delete State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Category Hierarchy State
   const [hierarchy, setHierarchy] = useState<any[]>([]);
@@ -41,6 +48,13 @@ export function ProductsPage() {
   const [selectedSubcatId, setSelectedSubcatId] = useState("");
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
+
+  const [brandSearch, setBrandSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+
+  const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+  const [productError, setProductError] = useState("");
 
   const [imeiModalOpen, setImeiModalOpen] = useState(false);
   const [targetProduct, setTargetProduct] = useState<Product | null>(null);
@@ -65,15 +79,27 @@ export function ProductsPage() {
 
   const [catName, setCatName] = useState("");
   const [catIcon, setCatIcon] = useState("");
+  const [catDesc, setCatDesc] = useState("");
+  const [catError, setCatError] = useState("");
+
   const [subcatCatId, setSubcatCatId] = useState("");
   const [subcatName, setSubcatName] = useState("");
+  const [subcatDesc, setSubcatDesc] = useState("");
+  const [subcatError, setSubcatError] = useState("");
+
+  const [brandCatId, setBrandCatId] = useState("");
   const [brandSubcatId, setBrandSubcatId] = useState("");
   const [brandName, setBrandName] = useState("");
   const [brandLogo, setBrandLogo] = useState("");
+  const [brandError, setBrandError] = useState("");
+
+  const [modelCatId, setModelCatId] = useState("");
+  const [modelSubcatId, setModelSubcatId] = useState("");
   const [modelBrandId, setModelBrandId] = useState("");
   const [modelName, setModelName] = useState("");
   const [modelNumber, setModelNumber] = useState("");
   const [modelYear, setModelYear] = useState<number | undefined>(new Date().getFullYear());
+  const [modelError, setModelError] = useState("");
 
   const loadHierarchy = () => {
     fetch("/api/categories/hierarchy")
@@ -102,6 +128,18 @@ export function ProductsPage() {
     const b = currentBrands.find((br: any) => br.id === selectedBrandId);
     return b?.models || [];
   }, [currentBrands, selectedBrandId]);
+
+  const filteredCurrentBrands = useMemo(() => {
+    if (!brandSearch.trim()) return currentBrands;
+    const q = brandSearch.trim().toLowerCase();
+    return currentBrands.filter((b: any) => b.name.toLowerCase().includes(q));
+  }, [currentBrands, brandSearch]);
+
+  const filteredCurrentModels = useMemo(() => {
+    if (!modelSearch.trim()) return currentModels;
+    const q = modelSearch.trim().toLowerCase();
+    return currentModels.filter((m: any) => m.name.toLowerCase().includes(q));
+  }, [currentModels, modelSearch]);
 
   // Master flat lists
   const allCategories = useMemo(() => {
@@ -199,7 +237,40 @@ export function ProductsPage() {
     warrantyMonths: 12,
     qty: 0,
     reorderLevel: 2,
+    barcode: "",
+    hsn: "85171300",
+    openingStock: 0,
   });
+
+  const selectedModelObj = useMemo(() => {
+    return currentModels.find((m: any) => m.id === selectedModelId);
+  }, [currentModels, selectedModelId]);
+
+  const existingVariants = useMemo(() => {
+    if (!selectedModelId && !form.model) return [];
+    return (db.products || []).filter((p) => {
+      if (selectedModelId && p.modelId === selectedModelId) return true;
+      if (form.model && p.model?.toLowerCase() === form.model.toLowerCase()) {
+        if (!form.brand || p.brand?.toLowerCase() === form.brand.toLowerCase()) return true;
+      }
+      return false;
+    });
+  }, [db.products, selectedModelId, form.model, form.brand]);
+
+  const isDuplicateVariant = useMemo(() => {
+    if (!selectedModelId && !form.model) return false;
+    return (db.products || []).some((p) => {
+      if (editingProduct && p.id === editingProduct.id) return false;
+      const sameModel =
+        (selectedModelId && p.modelId === selectedModelId) ||
+        (form.model && p.model?.toLowerCase() === form.model.toLowerCase() && p.brand?.toLowerCase() === form.brand.toLowerCase());
+      if (!sameModel) return false;
+      const sameRam = (p.ram || "").trim().toLowerCase() === (form.ram || "").trim().toLowerCase();
+      const sameStorage = (p.storage || "").trim().toLowerCase() === (form.storage || "").trim().toLowerCase();
+      const sameColor = (p.color || "").trim().toLowerCase() === (form.color || "").trim().toLowerCase();
+      return sameRam && sameStorage && sameColor;
+    });
+  }, [db.products, selectedModelId, form.model, form.brand, form.ram, form.storage, form.color, editingProduct]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -209,7 +280,9 @@ export function ProductsPage() {
       return (
         p.name.toLowerCase().includes(q) ||
         p.brand.toLowerCase().includes(q) ||
-        p.model.toLowerCase().includes(q)
+        p.model.toLowerCase().includes(q) ||
+        (p.sku && p.sku.toLowerCase().includes(q)) ||
+        (p.barcode && p.barcode.toLowerCase().includes(q))
       );
     });
   }, [db.products, query, catFilter]);
@@ -220,6 +293,9 @@ export function ProductsPage() {
     setSelectedSubcatId("");
     setSelectedBrandId("");
     setSelectedModelId("");
+    setBrandSearch("");
+    setModelSearch("");
+    setProductError("");
     setForm({
       name: "",
       brand: "",
@@ -237,6 +313,9 @@ export function ProductsPage() {
       warrantyMonths: 12,
       qty: 0,
       reorderLevel: 2,
+      barcode: "",
+      hsn: "85171300",
+      openingStock: 0,
     });
     setModalOpen(true);
   };
@@ -247,6 +326,9 @@ export function ProductsPage() {
     setSelectedSubcatId(p.subcategoryId || "");
     setSelectedBrandId(p.brandId || "");
     setSelectedModelId(p.modelId || "");
+    setBrandSearch("");
+    setModelSearch("");
+    setProductError("");
     setForm({
       name: p.name,
       brand: p.brand,
@@ -268,28 +350,221 @@ export function ProductsPage() {
       warrantyMonths: p.warrantyMonths,
       qty: p.qty,
       reorderLevel: p.reorderLevel,
+      barcode: p.barcode || "",
+      hsn: p.hsn || (p.tracked ? "85171300" : "85177900"),
+      openingStock: p.openingStock || 0,
     });
     setModalOpen(true);
   };
 
-  const handleSaveProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name || !form.brand) return;
+  const openDeleteModal = (p: Product) => {
+    setProductToDelete(p);
+    setDeleteError("");
+    setDeleteModalOpen(true);
+  };
 
-    const payload = {
+  const handleConfirmDelete = async (force = false) => {
+    if (!productToDelete) return;
+    setIsDeleting(true);
+    setDeleteError("");
+    try {
+      await deleteProduct(productToDelete.id, force);
+      setToastMsg(`Product "${productToDelete.name}" deleted successfully.`);
+      setDeleteModalOpen(false);
+      setProductToDelete(null);
+      if (modalOpen && editingProduct?.id === productToDelete.id) {
+        setModalOpen(false);
+        setEditingProduct(null);
+      }
+    } catch (err: any) {
+      setDeleteError(err.message || "Failed to delete product");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCategoryChange = (catId: string) => {
+    setSelectedCatId(catId);
+    setSelectedSubcatId("");
+    setSelectedBrandId("");
+    setSelectedModelId("");
+    setBrandSearch("");
+    setModelSearch("");
+    const catObj = hierarchy.find((c) => c.id === catId);
+    if (catObj) {
+      const isMobile = /mobile|phone|tablet|smartphone/i.test(catObj.name);
+      setForm((f) => ({
+        ...f,
+        category: catObj.name as any,
+        categoryId: catId,
+        subcategoryId: undefined,
+        brandId: undefined,
+        modelId: undefined,
+        tracked: isMobile,
+        hsn: isMobile ? "85171300" : "85177900",
+      }));
+    } else {
+      setForm((f) => ({
+        ...f,
+        categoryId: undefined,
+        subcategoryId: undefined,
+        brandId: undefined,
+        modelId: undefined,
+      }));
+    }
+  };
+
+  const handleSubcategoryChange = (subId: string) => {
+    setSelectedSubcatId(subId);
+    setSelectedBrandId("");
+    setSelectedModelId("");
+    setBrandSearch("");
+    setModelSearch("");
+    setForm((f) => ({
+      ...f,
+      subcategoryId: subId || undefined,
+      brandId: undefined,
+      modelId: undefined,
+    }));
+  };
+
+  const handleBrandChange = (bId: string) => {
+    setSelectedBrandId(bId);
+    setSelectedModelId("");
+    setModelSearch("");
+    const bObj = currentBrands.find((b: any) => b.id === bId);
+    if (bObj) {
+      setForm((f) => ({
+        ...f,
+        brand: bObj.name,
+        brandId: bId,
+        modelId: undefined,
+        name: `${bObj.name} ${f.model || ""}`.trim(),
+      }));
+    } else {
+      setForm((f) => ({
+        ...f,
+        brandId: undefined,
+        modelId: undefined,
+      }));
+    }
+  };
+
+  const handleModelChange = (mId: string) => {
+    setSelectedModelId(mId);
+    const mObj = currentModels.find((m: any) => m.id === mId);
+    if (mObj) {
+      setForm((f) => {
+        const specs = [f.ram && `${f.ram} RAM`, f.storage, f.color].filter(Boolean).join(" ");
+        const autoName = `${f.brand || ""} ${mObj.name} ${specs}`.trim();
+        return {
+          ...f,
+          model: mObj.name,
+          modelId: mId,
+          name: autoName || `${f.brand || ""} ${mObj.name}`.trim(),
+        };
+      });
+    } else {
+      setForm((f) => ({ ...f, modelId: undefined }));
+    }
+  };
+
+  const updateSpecAndName = (field: "ram" | "storage" | "color", value: string) => {
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      const specs = [next.ram && `${next.ram} RAM`, next.storage, next.color].filter(Boolean).join(" ");
+      const autoName = `${next.brand || ""} ${next.model || ""} ${specs}`.trim();
+      return {
+        ...next,
+        name: autoName || next.name,
+      };
+    });
+  };
+
+  const openAddCatModal = () => {
+    setEditingCat(null);
+    setCatName("");
+    setCatIcon("");
+    setCatDesc("");
+    setCatError("");
+    setCatModalOpen(true);
+  };
+
+  const openAddSubcatModal = () => {
+    setEditingSubcat(null);
+    setSubcatCatId(selectedCatId || (hierarchy[0]?.id ?? ""));
+    setSubcatName("");
+    setSubcatDesc("");
+    setSubcatError("");
+    setSubcatModalOpen(true);
+  };
+
+  const openAddBrandModal = () => {
+    setEditingBrand(null);
+    setBrandCatId(selectedCatId || (hierarchy[0]?.id ?? ""));
+    setBrandSubcatId(selectedSubcatId || "");
+    setBrandName("");
+    setBrandLogo("");
+    setBrandError("");
+    setBrandModalOpen(true);
+  };
+
+  const openAddModelModal = () => {
+    setEditingModel(null);
+    setModelCatId(selectedCatId || "");
+    setModelSubcatId(selectedSubcatId || "");
+    setModelBrandId(selectedBrandId || "");
+    setModelName(modelSearch.trim() || "");
+    setModelNumber("");
+    setModelYear(new Date().getFullYear());
+    setModelError("");
+    setModelModalOpen(true);
+  };
+
+  const handleSaveProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name || !form.brand) {
+      setProductError("Product Name and Brand are required.");
+      return;
+    }
+    if (isDuplicateVariant) {
+      setProductError("Cannot save: A variant with this Model, RAM, Storage, and Color already exists.");
+      return;
+    }
+
+    const payload: any = {
       ...form,
       categoryId: selectedCatId || form.categoryId || undefined,
       subcategoryId: selectedSubcatId || form.subcategoryId || undefined,
       brandId: selectedBrandId || form.brandId || undefined,
       modelId: selectedModelId || form.modelId || undefined,
+      barcode: form.barcode?.trim() || undefined,
+      hsn: form.hsn?.trim() || undefined,
+      openingStock: form.openingStock ? Number(form.openingStock) : undefined,
     };
 
-    if (editingProduct) {
-      updateProduct(editingProduct.id, payload);
-    } else {
-      addProduct(payload);
+    try {
+      if (editingProduct) {
+        updateProduct(editingProduct.id, payload);
+        await fetch(`/api/products/${editingProduct.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch(() => {});
+      } else {
+        const created = addProduct(payload);
+        await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, id: created.id }),
+        }).catch(() => {});
+      }
+      setModalOpen(false);
+      setToastMsg(editingProduct ? "Product updated successfully!" : "Product created successfully!");
+      setTimeout(() => setToastMsg(""), 3500);
+    } catch (err: any) {
+      setProductError(err.message || "Failed to save product");
     }
-    setModalOpen(false);
   };
 
   const handleAddImeis = (e: React.FormEvent) => {
@@ -314,21 +589,53 @@ export function ProductsPage() {
   const saveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!catName.trim()) return;
-    if (editingCat) {
-      await fetch(`/api/categories/${editingCat.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: catName.trim(), icon: catIcon || undefined }),
-      });
-    } else {
-      await fetch("/api/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: catName.trim(), icon: catIcon || undefined }),
-      });
+    setCatError("");
+    try {
+      if (editingCat) {
+        const res = await fetch(`/api/categories/${editingCat.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: catName.trim(), icon: catIcon || undefined, description: catDesc || undefined }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to update category");
+        }
+      } else {
+        const res = await fetch("/api/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: catName.trim(), icon: catIcon || undefined, description: catDesc || undefined }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to create category");
+        }
+        const created = await res.json();
+        if (created && created.id) {
+          setSelectedCatId(created.id);
+          setSelectedSubcatId("");
+          setSelectedBrandId("");
+          setSelectedModelId("");
+          const isMobile = /mobile|phone|tablet|smartphone/i.test(created.name);
+          setForm((f) => ({
+            ...f,
+            category: created.name as any,
+            categoryId: created.id,
+            subcategoryId: undefined,
+            brandId: undefined,
+            modelId: undefined,
+            tracked: isMobile,
+            hsn: isMobile ? "85171300" : "85177900",
+          }));
+        }
+      }
+      loadHierarchy();
+      setCatModalOpen(false);
+      setEditingCat(null);
+    } catch (err: any) {
+      setCatError(err.message || "Failed to save category");
     }
-    loadHierarchy();
-    setCatModalOpen(false);
   };
 
   const toggleCategoryActive = async (c: any) => {
@@ -349,21 +656,47 @@ export function ProductsPage() {
   const saveSubcategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subcatName.trim() || !subcatCatId) return;
-    if (editingSubcat) {
-      await fetch(`/api/subcategories/${editingSubcat.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: subcatCatId, name: subcatName.trim() }),
-      });
-    } else {
-      await fetch("/api/subcategories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: subcatCatId, name: subcatName.trim() }),
-      });
+    setSubcatError("");
+    try {
+      if (editingSubcat) {
+        const res = await fetch(`/api/subcategories/${editingSubcat.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId: subcatCatId, name: subcatName.trim(), description: subcatDesc || undefined }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to update subcategory");
+        }
+      } else {
+        const res = await fetch("/api/subcategories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId: subcatCatId, name: subcatName.trim(), description: subcatDesc || undefined }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to create subcategory");
+        }
+        const created = await res.json();
+        if (created && created.id) {
+          setSelectedSubcatId(created.id);
+          setSelectedBrandId("");
+          setSelectedModelId("");
+          setForm((f) => ({
+            ...f,
+            subcategoryId: created.id,
+            brandId: undefined,
+            modelId: undefined,
+          }));
+        }
+      }
+      loadHierarchy();
+      setSubcatModalOpen(false);
+      setEditingSubcat(null);
+    } catch (err: any) {
+      setSubcatError(err.message || "Failed to save subcategory");
     }
-    loadHierarchy();
-    setSubcatModalOpen(false);
   };
 
   const toggleSubcategoryActive = async (s: any) => {
@@ -383,22 +716,58 @@ export function ProductsPage() {
 
   const saveBrand = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!brandName.trim() || !brandSubcatId) return;
-    if (editingBrand) {
-      await fetch(`/api/brands/${editingBrand.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subcategoryId: brandSubcatId, name: brandName.trim(), logoUrl: brandLogo || undefined }),
-      });
-    } else {
-      await fetch("/api/brands", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subcategoryId: brandSubcatId, name: brandName.trim(), logoUrl: brandLogo || undefined }),
-      });
+    if (!brandName.trim()) return;
+    setBrandError("");
+    try {
+      if (editingBrand) {
+        const res = await fetch(`/api/brands/${editingBrand.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subcategoryId: brandSubcatId || undefined,
+            categoryId: brandCatId || selectedCatId || undefined,
+            name: brandName.trim(),
+            logoUrl: brandLogo || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to update brand");
+        }
+      } else {
+        const res = await fetch("/api/brands", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subcategoryId: brandSubcatId || selectedSubcatId || undefined,
+            categoryId: brandCatId || selectedCatId || undefined,
+            name: brandName.trim(),
+            logoUrl: brandLogo || undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to create brand");
+        }
+        const created = await res.json();
+        if (created && created.id) {
+          setSelectedBrandId(created.id);
+          setSelectedModelId("");
+          setForm((f) => ({
+            ...f,
+            brand: created.name,
+            brandId: created.id,
+            modelId: undefined,
+            name: `${created.name} ${f.model || ""}`.trim(),
+          }));
+        }
+      }
+      loadHierarchy();
+      setBrandModalOpen(false);
+      setEditingBrand(null);
+    } catch (err: any) {
+      setBrandError(err.message || "Failed to save brand");
     }
-    loadHierarchy();
-    setBrandModalOpen(false);
   };
 
   const toggleBrandActive = async (b: any) => {
@@ -419,31 +788,63 @@ export function ProductsPage() {
   const saveModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modelName.trim() || !modelBrandId) return;
-    if (editingModel) {
-      await fetch(`/api/models/${editingModel.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandId: modelBrandId,
-          name: modelName.trim(),
-          modelNumber: modelNumber || undefined,
-          releaseYear: modelYear ? Number(modelYear) : undefined,
-        }),
-      });
-    } else {
-      await fetch("/api/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandId: modelBrandId,
-          name: modelName.trim(),
-          modelNumber: modelNumber || undefined,
-          releaseYear: modelYear ? Number(modelYear) : undefined,
-        }),
-      });
+    setModelError("");
+    try {
+      if (editingModel) {
+        const res = await fetch(`/api/models/${editingModel.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brandId: modelBrandId,
+            categoryId: modelCatId || selectedCatId || undefined,
+            subcategoryId: modelSubcatId || selectedSubcatId || undefined,
+            name: modelName.trim(),
+            modelNumber: modelNumber || undefined,
+            releaseYear: modelYear ? Number(modelYear) : undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to update model");
+        }
+      } else {
+        const res = await fetch("/api/models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brandId: modelBrandId,
+            categoryId: modelCatId || selectedCatId || undefined,
+            subcategoryId: modelSubcatId || selectedSubcatId || undefined,
+            name: modelName.trim(),
+            modelNumber: modelNumber || undefined,
+            releaseYear: modelYear ? Number(modelYear) : undefined,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to create model");
+        }
+        const created = await res.json();
+        if (created && created.id) {
+          setSelectedModelId(created.id);
+          setForm((f) => {
+            const specs = [f.ram && `${f.ram} RAM`, f.storage, f.color].filter(Boolean).join(" ");
+            const autoName = `${f.brand || ""} ${created.name} ${specs}`.trim();
+            return {
+              ...f,
+              model: created.name,
+              modelId: created.id,
+              name: autoName || `${f.brand || ""} ${created.name}`.trim(),
+            };
+          });
+        }
+      }
+      loadHierarchy();
+      setModelModalOpen(false);
+      setEditingModel(null);
+    } catch (err: any) {
+      setModelError(err.message || "Failed to save model");
     }
-    loadHierarchy();
-    setModelModalOpen(false);
   };
 
   const toggleModelActive = async (m: any) => {
@@ -506,9 +907,14 @@ export function ProductsPage() {
               </button>
             </div>
             {activeTab === "catalog" && (
-              <Button onClick={openAddModal} className="shadow-md">
-                + Add Product
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button onClick={() => setQuickProductModalOpen(true)} className="shadow-md" variant="soft">
+                  ⚡ + Quick Add Product
+                </Button>
+                <Button onClick={openAddModal} className="shadow-md">
+                  + Add Product
+                </Button>
+              </div>
             )}
           </div>
         }
@@ -660,6 +1066,14 @@ export function ProductsPage() {
                               + IMEIs
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                            onClick={() => openDeleteModal(p)}
+                          >
+                            Delete
+                          </Button>
                         </div>
                       </Td>
                     </Row>
@@ -1362,15 +1776,127 @@ export function ProductsPage() {
             </Field>
           </div>
 
-          <div className="flex justify-end gap-2 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">
-              {editingProduct ? "Save Changes" : "Create Product"}
-            </Button>
+          <div className="flex items-center justify-between pt-3 border-t border-border">
+            {editingProduct ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200"
+                onClick={() => openDeleteModal(editingProduct)}
+              >
+                Delete Product
+              </Button>
+            ) : (
+              <div />
+            )}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={() => setModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit">
+                {editingProduct ? "Save Changes" : "Create Product"}
+              </Button>
+            </div>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Product Confirmation Modal */}
+      <Modal
+        open={deleteModalOpen}
+        onClose={() => {
+          if (!isDeleting) {
+            setDeleteModalOpen(false);
+            setProductToDelete(null);
+            setDeleteError("");
+          }
+        }}
+        title="Delete Product"
+      >
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[13px] flex items-start gap-2.5">
+            <span className="text-lg">⚠️</span>
+            <div>
+              <p className="font-semibold">Are you sure you want to delete this product?</p>
+              <p className="text-[12px] text-rose-700 mt-0.5">
+                This will permanently remove the product from your catalog.
+              </p>
+            </div>
+          </div>
+
+          {productToDelete && (
+            <div className="rounded-lg border border-border bg-slate-50/50 p-3 space-y-2 text-[12.5px]">
+              <div className="flex justify-between items-center py-1 border-b border-border/50">
+                <span className="text-muted-foreground">Product Name:</span>
+                <span className="font-semibold text-foreground">{productToDelete.name}</span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-border/50">
+                <span className="text-muted-foreground">Brand & Model:</span>
+                <span className="font-medium text-foreground">{productToDelete.brand} — {productToDelete.model}</span>
+              </div>
+              {(productToDelete.ram || productToDelete.storage || productToDelete.color) && (
+                <div className="flex justify-between items-center py-1 border-b border-border/50">
+                  <span className="text-muted-foreground">Variant:</span>
+                  <span className="font-medium text-foreground">
+                    {[productToDelete.ram && `${productToDelete.ram} RAM`, productToDelete.storage, productToDelete.color].filter(Boolean).join(" · ")}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center py-1 border-b border-border/50">
+                <span className="text-muted-foreground">Category:</span>
+                <span className="font-medium text-foreground">{productToDelete.category}</span>
+              </div>
+              <div className="flex justify-between items-center py-1">
+                <span className="text-muted-foreground">Current Stock:</span>
+                <span className="font-bold text-foreground">
+                  {stockOf(db, productToDelete.id)} {productToDelete.tracked ? "units (IMEI tracked)" : "pcs"}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {deleteError && (
+            <div className="p-3 rounded-md bg-rose-100 border border-rose-300 text-rose-900 text-[12px] space-y-2">
+              <p className="font-semibold">{deleteError}</p>
+              {deleteError.includes("transaction history") && (
+                <div className="pt-2 border-t border-rose-200 flex justify-end">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    disabled={isDeleting}
+                    onClick={() => handleConfirmDelete(true)}
+                  >
+                    {isDeleting ? "Force Deleting..." : "Force Delete Anyway"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-border">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={isDeleting}
+              onClick={() => {
+                setDeleteModalOpen(false);
+                setProductToDelete(null);
+                setDeleteError("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              disabled={isDeleting}
+              onClick={() => handleConfirmDelete(false)}
+            >
+              {isDeleting ? "Deleting..." : "Delete Product"}
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* Add IMEIs Modal */}

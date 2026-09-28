@@ -8,6 +8,14 @@ let dbInstance: DatabaseSync | null = null;
 export function getDatabasePath(): string {
   const customPath = process.env.DATABASE_PATH;
   if (customPath) return customPath;
+  if (
+    process.env.NODE_ENV === "test" ||
+    Boolean(process.env.TEST) ||
+    typeof (globalThis as any).describe === "function" ||
+    typeof (globalThis as any).test === "function"
+  ) {
+    return "/tmp/store_test.sqlite";
+  }
   const dataDir = path.resolve(process.cwd(), "data");
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });

@@ -5,7 +5,6 @@ import {
   Field,
   Input,
   Modal,
-  Row,
   Select,
 } from "./ui";
 import { useStore } from "@/lib/store";
@@ -16,6 +15,7 @@ interface QuickProductModalProps {
   onClose: () => void;
   onSuccess: (product: Product) => void;
   currentEmployeeId?: string;
+  initialCategory?: string;
 }
 
 export function QuickProductModal({
@@ -23,6 +23,7 @@ export function QuickProductModal({
   onClose,
   onSuccess,
   currentEmployeeId,
+  initialCategory,
 }: QuickProductModalProps) {
   const { db, addProduct } = useStore();
 
@@ -36,6 +37,10 @@ export function QuickProductModal({
   const [selectedBrandId, setSelectedBrandId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
 
+  // Search filters for searchable dropdowns
+  const [brandSearch, setBrandSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+
   // Product Fields
   const [productName, setProductName] = useState("");
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
@@ -48,12 +53,12 @@ export function QuickProductModal({
   const [hsn, setHsn] = useState("85171300");
   const [warrantyMonths, setWarrantyMonths] = useState(12);
   const [tracked, setTracked] = useState(true);
-  const [serialTracking, setSerialTracking] = useState(false);
   const [purchasePrice, setPurchasePrice] = useState<number | "">("");
   const [sellingPrice, setSellingPrice] = useState<number | "">("");
   const [mrp, setMrp] = useState<number | "">("");
   const [gstRate, setGstRate] = useState(18);
-  const [minimumStock, setMinimumStock] = useState(2);
+  const [openingStock, setOpeningStock] = useState<number | "">("");
+  const [reorderLevel, setReorderLevel] = useState(2);
 
   // Inline Master Modals
   const [addCatModalOpen, setAddCatModalOpen] = useState(false);
@@ -63,32 +68,61 @@ export function QuickProductModal({
 
   // Inline Master Fields
   const [newCatName, setNewCatName] = useState("");
+  const [newCatDesc, setNewCatDesc] = useState("");
+
+  const [newSubcatCatId, setNewSubcatCatId] = useState("");
   const [newSubcatName, setNewSubcatName] = useState("");
+  const [newSubcatDesc, setNewSubcatDesc] = useState("");
+
+  const [newBrandCatId, setNewBrandCatId] = useState("");
+  const [newBrandSubcatId, setNewBrandSubcatId] = useState("");
   const [newBrandName, setNewBrandName] = useState("");
+  const [newBrandLogo, setNewBrandLogo] = useState("");
+
+  const [newModelBrandId, setNewModelBrandId] = useState("");
+  const [newModelCatId, setNewModelCatId] = useState("");
+  const [newModelSubcatId, setNewModelSubcatId] = useState("");
   const [newModelName, setNewModelName] = useState("");
+  const [newModelNumber, setNewModelNumber] = useState("");
+  const [newModelYear, setNewModelYear] = useState<number | undefined>(new Date().getFullYear());
 
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [inlineError, setInlineError] = useState("");
 
-  const loadHierarchy = () => {
+  const loadHierarchy = async () => {
     setLoadingHierarchy(true);
-    fetch("/api/categories/hierarchy")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setHierarchy(data);
-        }
-      })
-      .catch((err) => console.error("Failed to load hierarchy:", err))
-      .finally(() => setLoadingHierarchy(false));
+    try {
+      const res = await fetch("/api/categories/hierarchy");
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setHierarchy(data);
+        return data;
+      }
+    } catch (err) {
+      console.error("Failed to load hierarchy:", err);
+    } finally {
+      setLoadingHierarchy(false);
+    }
+    return [];
   };
 
   useEffect(() => {
     if (open) {
-      loadHierarchy();
+      loadHierarchy().then((data) => {
+        if (initialCategory && Array.isArray(data)) {
+          const found = data.find(
+            (c) => c.name.toLowerCase() === initialCategory.toLowerCase()
+          );
+          if (found) {
+            handleCategoryChange(found.id, data);
+          }
+        }
+      });
       setErrorMsg("");
+      setInlineError("");
     }
-  }, [open]);
+  }, [open, initialCategory]);
 
   // Derived subcategories for selected category
   const availableSubcategories = useMemo(() => {
@@ -104,6 +138,13 @@ export function QuickProductModal({
     return (sub?.brands || []) as (BrandEntity & { models: any[] })[];
   }, [availableSubcategories, selectedSubcatId]);
 
+  // Filtered brands based on search input
+  const filteredBrands = useMemo(() => {
+    if (!brandSearch.trim()) return availableBrands;
+    const q = brandSearch.trim().toLowerCase();
+    return availableBrands.filter((b) => b.name.toLowerCase().includes(q));
+  }, [availableBrands, brandSearch]);
+
   // Derived models for selected brand
   const availableModels = useMemo(() => {
     if (!selectedBrandId) return [];
@@ -111,27 +152,55 @@ export function QuickProductModal({
     return (brand?.models || []) as ModelEntity[];
   }, [availableBrands, selectedBrandId]);
 
-  // Auto-compose product name when brand, model, or variant changes (if user hasn't typed custom name)
+  // Filtered models based on search input
+  const filteredModels = useMemo(() => {
+    if (!modelSearch.trim()) return availableModels;
+    const q = modelSearch.trim().toLowerCase();
+    return availableModels.filter((m) => m.name.toLowerCase().includes(q));
+  }, [availableModels, modelSearch]);
+
+  // Existing variants for selected model
+  const existingVariantsForModel = useMemo(() => {
+    if (!selectedModelId) return [];
+    return (db.products || []).filter((p) => p.modelId === selectedModelId);
+  }, [db.products, selectedModelId]);
+
+  // Duplicate variant check
+  const duplicateVariant = useMemo(() => {
+    if (!selectedModelId || (!ram && !storage && !color)) return null;
+    return existingVariantsForModel.find(
+      (p) =>
+        (p.ram || "").trim().toLowerCase() === (ram || "").trim().toLowerCase() &&
+        (p.storage || "").trim().toLowerCase() === (storage || "").trim().toLowerCase() &&
+        (p.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
+    );
+  }, [existingVariantsForModel, ram, storage, color, selectedModelId]);
+
+  // Auto-compose product name
   useEffect(() => {
     if (nameManuallyEdited) return;
 
     const brand = availableBrands.find((b) => b.id === selectedBrandId)?.name || "";
     const model = availableModels.find((m) => m.id === selectedModelId)?.name || "";
-    const varPart = variant.trim() ? ` ${variant.trim()}` : "";
+    const specs = [ram.trim(), storage.trim()].filter(Boolean).join("/");
+    const colorPart = color.trim() ? ` ${color.trim()}` : "";
+    const specPart = specs ? ` (${specs}${colorPart})` : colorPart;
 
     if (brand || model) {
-      setProductName(`${brand} ${model}${varPart}`.trim());
+      setProductName(`${brand} ${model}${specPart}`.trim());
     }
-  }, [selectedBrandId, selectedModelId, variant, availableBrands, availableModels, nameManuallyEdited]);
+  }, [selectedBrandId, selectedModelId, ram, storage, color, availableBrands, availableModels, nameManuallyEdited]);
 
-  // Auto-enable IMEI tracking for mobile/phone categories
-  const handleCategoryChange = (catId: string) => {
+  // Handle Category Change
+  const handleCategoryChange = (catId: string, currentTree = hierarchy) => {
     setSelectedCatId(catId);
     setSelectedSubcatId("");
     setSelectedBrandId("");
     setSelectedModelId("");
+    setBrandSearch("");
+    setModelSearch("");
 
-    const cat = hierarchy.find((c) => c.id === catId);
+    const cat = currentTree.find((c) => c.id === catId);
     const catNameLower = (cat?.name || "").toLowerCase();
     const isMobileCat =
       catNameLower.includes("mobile") ||
@@ -152,12 +221,24 @@ export function QuickProductModal({
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
+    setInlineError("");
+
+    // Check duplicate locally
+    if (hierarchy.some((c) => c.name.toLowerCase() === newCatName.trim().toLowerCase())) {
+      setInlineError(`Category '${newCatName.trim()}' already exists.`);
+      return;
+    }
 
     try {
       const res = await fetch("/api/categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newCatName.trim(), employeeId: currentEmployeeId }),
+        body: JSON.stringify({
+          name: newCatName.trim(),
+          description: newCatDesc.trim() || undefined,
+          employeeId: currentEmployeeId,
+          throwOnDuplicate: true,
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -165,30 +246,39 @@ export function QuickProductModal({
       }
       const created = await res.json();
       setNewCatName("");
+      setNewCatDesc("");
       setAddCatModalOpen(false);
-      loadHierarchy();
-      setSelectedCatId(created.id);
-      setSelectedSubcatId("");
-      setSelectedBrandId("");
-      setSelectedModelId("");
+      const updated = await loadHierarchy();
+      handleCategoryChange(created.id, updated);
     } catch (err: any) {
-      alert(err.message || "Failed to create category");
+      setInlineError(err.message || "Failed to create category");
     }
   };
 
   // Inline Subcategory Save
   const handleCreateSubcategory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSubcatName.trim() || !selectedCatId) return;
+    const targetCatId = newSubcatCatId || selectedCatId;
+    if (!newSubcatName.trim() || !targetCatId) return;
+    setInlineError("");
+
+    // Check duplicate locally
+    const cat = hierarchy.find((c) => c.id === targetCatId);
+    if ((cat?.subcategories || []).some((s: any) => s.name.toLowerCase() === newSubcatName.trim().toLowerCase())) {
+      setInlineError(`Subcategory '${newSubcatName.trim()}' already exists under this category.`);
+      return;
+    }
 
     try {
       const res = await fetch("/api/subcategories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          categoryId: selectedCatId,
+          categoryId: targetCatId,
           name: newSubcatName.trim(),
+          description: newSubcatDesc.trim() || undefined,
           employeeId: currentEmployeeId,
+          throwOnDuplicate: true,
         }),
       });
       if (!res.ok) {
@@ -197,13 +287,15 @@ export function QuickProductModal({
       }
       const created = await res.json();
       setNewSubcatName("");
+      setNewSubcatDesc("");
       setAddSubcatModalOpen(false);
-      loadHierarchy();
+      await loadHierarchy();
+      setSelectedCatId(targetCatId);
       setSelectedSubcatId(created.id);
       setSelectedBrandId("");
       setSelectedModelId("");
     } catch (err: any) {
-      alert(err.message || "Failed to create subcategory");
+      setInlineError(err.message || "Failed to create subcategory");
     }
   };
 
@@ -211,15 +303,22 @@ export function QuickProductModal({
   const handleCreateBrand = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBrandName.trim()) return;
+    setInlineError("");
+
+    const targetSubcatId = newBrandSubcatId || selectedSubcatId;
+    const targetCatId = newBrandCatId || selectedCatId;
 
     try {
       const res = await fetch("/api/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subcategoryId: selectedSubcatId || undefined,
+          categoryId: targetCatId || undefined,
+          subcategoryId: targetSubcatId || undefined,
           name: newBrandName.trim(),
+          logoUrl: newBrandLogo.trim() || undefined,
           employeeId: currentEmployeeId,
+          throwOnDuplicate: true,
         }),
       });
       if (!res.ok) {
@@ -228,28 +327,38 @@ export function QuickProductModal({
       }
       const created = await res.json();
       setNewBrandName("");
+      setNewBrandLogo("");
       setAddBrandModalOpen(false);
-      loadHierarchy();
+      await loadHierarchy();
+      if (targetCatId) setSelectedCatId(targetCatId);
+      if (targetSubcatId) setSelectedSubcatId(targetSubcatId);
       setSelectedBrandId(created.id);
       setSelectedModelId("");
     } catch (err: any) {
-      alert(err.message || "Failed to create brand");
+      setInlineError(err.message || "Failed to create brand");
     }
   };
 
   // Inline Model Save
   const handleCreateModel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newModelName.trim() || !selectedBrandId) return;
+    const targetBrandId = newModelBrandId || selectedBrandId;
+    if (!newModelName.trim() || !targetBrandId) return;
+    setInlineError("");
 
     try {
       const res = await fetch("/api/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          brandId: selectedBrandId,
+          brandId: targetBrandId,
+          categoryId: newModelCatId || selectedCatId || undefined,
+          subcategoryId: newModelSubcatId || selectedSubcatId || undefined,
           name: newModelName.trim(),
+          modelNumber: newModelNumber.trim() || undefined,
+          releaseYear: newModelYear ? Number(newModelYear) : undefined,
           employeeId: currentEmployeeId,
+          throwOnDuplicate: true,
         }),
       });
       if (!res.ok) {
@@ -258,11 +367,13 @@ export function QuickProductModal({
       }
       const created = await res.json();
       setNewModelName("");
+      setNewModelNumber("");
       setAddModelModalOpen(false);
-      loadHierarchy();
+      await loadHierarchy();
+      setSelectedBrandId(targetBrandId);
       setSelectedModelId(created.id);
     } catch (err: any) {
-      alert(err.message || "Failed to create model");
+      setInlineError(err.message || "Failed to create model");
     }
   };
 
@@ -272,15 +383,29 @@ export function QuickProductModal({
     setErrorMsg("");
 
     if (!selectedCatId) {
-      setErrorMsg("Category is required.");
+      setErrorMsg("Category is required. Please select or add one.");
       return;
     }
     if (!selectedSubcatId) {
-      setErrorMsg("Subcategory is required.");
+      setErrorMsg("Subcategory is required. Please select or add one.");
+      return;
+    }
+    if (!selectedBrandId) {
+      setErrorMsg("Brand is required. Please select or add one.");
+      return;
+    }
+    if (!selectedModelId) {
+      setErrorMsg("Model is required. Please select or add one.");
       return;
     }
     if (!productName.trim()) {
       setErrorMsg("Product Name is required.");
+      return;
+    }
+
+    // Check duplicate variant
+    if (duplicateVariant) {
+      setErrorMsg(`Variant with Model '${availableModels.find((m) => m.id === selectedModelId)?.name}', RAM '${ram}', Storage '${storage}', and Color '${color}' already exists as '${duplicateVariant.name}'.`);
       return;
     }
 
@@ -311,8 +436,9 @@ export function QuickProductModal({
       const pPrice = typeof purchasePrice === "number" ? purchasePrice : 0;
       const sPrice = typeof sellingPrice === "number" ? sellingPrice : pPrice;
       const mPrice = typeof mrp === "number" ? mrp : sPrice;
+      const initStock = typeof openingStock === "number" ? openingStock : 0;
 
-      const payload: Omit<Product, "id"> = {
+      const payload: Omit<Product, "id"> & { openingStock?: number } = {
         name: productName.trim(),
         brand: brand?.name || "Generic",
         model: model?.name || productName.trim(),
@@ -321,22 +447,23 @@ export function QuickProductModal({
         subcategoryId: selectedSubcatId || undefined,
         brandId: selectedBrandId || undefined,
         modelId: selectedModelId || undefined,
-        variant: variant.trim() || undefined,
+        variant: variant.trim() || [ram.trim(), storage.trim(), color.trim()].filter(Boolean).join(" / ") || undefined,
         ram: ram.trim() || undefined,
         storage: storage.trim() || undefined,
         color: color.trim() || undefined,
         tracked,
         sku: sku.trim() || undefined,
         barcode: barcode.trim() || undefined,
-        hsn: hsn.trim() || "85171300",
+        hsn: hsn.trim() || (tracked ? "85171300" : "85177900"),
         purchasePrice: pPrice,
         sellingPrice: sPrice,
         mrp: mPrice,
         gst: Number(gstRate) || 18,
         warrantyMonths: Number(warrantyMonths) || 12,
-        minimumStock: Number(minimumStock) || 2,
-        reorderLevel: Number(minimumStock) || 2,
-        qty: 0, // IMPORTANT: Product creation creates zero stock!
+        minimumStock: Number(reorderLevel) || 2,
+        reorderLevel: Number(reorderLevel) || 2,
+        qty: initStock,
+        openingStock: initStock,
       };
 
       const res = await fetch("/api/products", {
@@ -353,9 +480,9 @@ export function QuickProductModal({
       const savedProduct: Product = await res.json();
 
       // Update store state with newly saved product
-      addProduct(payload);
+      addProduct(savedProduct);
 
-      // Auto return to inward items
+      // Return newly created product
       onSuccess(savedProduct);
       onClose();
     } catch (err: any) {
@@ -367,32 +494,40 @@ export function QuickProductModal({
 
   return (
     <>
-      <Modal open={open} onClose={onClose} title="Add New Product (Quick Inward Master)" wide>
+      <Modal open={open} onClose={onClose} title="Add New Product (Master Hierarchy)" wide>
         <form onSubmit={handleSaveProduct} className="space-y-4">
           {errorMsg && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-[12.5px] font-medium">
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-[12.5px] font-medium animate-in-soft">
               ⚠️ {errorMsg}
             </div>
           )}
 
-          {/* STEP 1: CATEGORY & SUBCATEGORY */}
-          <div className="p-3.5 rounded-xl border border-border/70 bg-muted/20 space-y-3">
-            <div className="text-[12px] font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wide">
-              <span>1. Hierarchy: Category & Subcategory</span>
+          {/* 1. DYNAMIC HIERARCHY SELECTOR WITH COMPACT [+] BUTTONS */}
+          <div className="p-3.5 rounded-xl border border-primary/20 bg-primary/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-bold text-primary flex items-center gap-1.5 uppercase tracking-wide">
+                <span>⚡ Dynamic Hierarchy (Category → Subcategory → Brand → Model)</span>
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                Click [+] to quickly create missing records
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Category */}
-              <Field label="Category *">
-                <div className="flex gap-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Category Dropdown + [+] */}
+              <div>
+                <label className="text-[11px] font-semibold text-foreground/80 block mb-1">
+                  1. Category *
+                </label>
+                <div className="flex gap-1 items-center">
                   <Select
                     value={selectedCatId}
                     onChange={(e) => handleCategoryChange(e.target.value)}
-                    className="flex-1 text-[12.5px]"
+                    className="flex-1 text-[12.5px] h-9"
                     required
                   >
                     <option value="" disabled>
-                      {loadingHierarchy ? "Loading categories..." : "Select Category..."}
+                      {loadingHierarchy ? "Loading..." : "Select Category..."}
                     </option>
                     {hierarchy.map((cat) => (
                       <option key={cat.id} value={cat.id}>
@@ -404,33 +539,44 @@ export function QuickProductModal({
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="whitespace-nowrap text-[11px] h-9 px-2.5"
-                    onClick={() => setAddCatModalOpen(true)}
+                    className="h-9 px-2.5 font-bold text-sm leading-none bg-background shrink-0"
+                    onClick={() => {
+                      setInlineError("");
+                      setNewCatName("");
+                      setNewCatDesc("");
+                      setAddCatModalOpen(true);
+                    }}
+                    title="Add Category"
                   >
-                    + Add Cat
+                    +
                   </Button>
                 </div>
-              </Field>
+              </div>
 
-              {/* Subcategory */}
-              <Field label="Subcategory *">
-                <div className="flex gap-1.5">
+              {/* Subcategory Dropdown + [+] */}
+              <div>
+                <label className="text-[11px] font-semibold text-foreground/80 block mb-1">
+                  2. Subcategory *
+                </label>
+                <div className="flex gap-1 items-center">
                   <Select
                     value={selectedSubcatId}
                     onChange={(e) => {
                       setSelectedSubcatId(e.target.value);
                       setSelectedBrandId("");
                       setSelectedModelId("");
+                      setBrandSearch("");
+                      setModelSearch("");
                     }}
                     disabled={!selectedCatId}
-                    className="flex-1 text-[12.5px]"
+                    className="flex-1 text-[12.5px] h-9"
                     required
                   >
                     <option value="" disabled>
                       {!selectedCatId
                         ? "Select Category First"
                         : availableSubcategories.length === 0
-                        ? "No Subcategories (Click + Add)"
+                        ? "No Subcategories ([+] to add)"
                         : "Select Subcategory..."}
                     </option>
                     {availableSubcategories.map((sub) => (
@@ -444,37 +590,46 @@ export function QuickProductModal({
                     variant="outline"
                     size="sm"
                     disabled={!selectedCatId}
-                    className="whitespace-nowrap text-[11px] h-9 px-2.5"
-                    onClick={() => setAddSubcatModalOpen(true)}
+                    className="h-9 px-2.5 font-bold text-sm leading-none bg-background shrink-0"
+                    onClick={() => {
+                      setInlineError("");
+                      setNewSubcatCatId(selectedCatId);
+                      setNewSubcatName("");
+                      setNewSubcatDesc("");
+                      setAddSubcatModalOpen(true);
+                    }}
+                    title="Add Subcategory"
                   >
-                    + Add Subcat
+                    +
                   </Button>
                 </div>
-              </Field>
-            </div>
-          </div>
+              </div>
 
-          {/* STEP 2: BRAND & MODEL */}
-          <div className="p-3.5 rounded-xl border border-border/70 bg-muted/20 space-y-3">
-            <div className="text-[12px] font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wide">
-              <span>2. Hierarchy: Brand & Model</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Brand */}
-              <Field label="Brand">
-                <div className="flex gap-1.5">
+              {/* Brand Dropdown + [+] */}
+              <div>
+                <label className="text-[11px] font-semibold text-foreground/80 block mb-1">
+                  3. Brand *
+                </label>
+                <div className="flex gap-1 items-center">
                   <Select
                     value={selectedBrandId}
                     onChange={(e) => {
                       setSelectedBrandId(e.target.value);
                       setSelectedModelId("");
+                      setModelSearch("");
                     }}
                     disabled={!selectedSubcatId}
-                    className="flex-1 text-[12.5px]"
+                    className="flex-1 text-[12.5px] h-9"
+                    required
                   >
-                    <option value="">Select Brand (Optional)...</option>
-                    {availableBrands.map((b) => (
+                    <option value="" disabled>
+                      {!selectedSubcatId
+                        ? "Select Subcat First"
+                        : availableBrands.length === 0
+                        ? "No Brands ([+] to add)"
+                        : "Select Brand..."}
+                    </option>
+                    {filteredBrands.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}
                       </option>
@@ -485,27 +640,45 @@ export function QuickProductModal({
                     variant="outline"
                     size="sm"
                     disabled={!selectedSubcatId}
-                    className="whitespace-nowrap text-[11px] h-9 px-2.5"
-                    onClick={() => setAddBrandModalOpen(true)}
+                    className="h-9 px-2.5 font-bold text-sm leading-none bg-background shrink-0"
+                    onClick={() => {
+                      setInlineError("");
+                      setNewBrandCatId(selectedCatId);
+                      setNewBrandSubcatId(selectedSubcatId);
+                      setNewBrandName("");
+                      setNewBrandLogo("");
+                      setAddBrandModalOpen(true);
+                    }}
+                    title="Add Brand"
                   >
-                    + Add Brand
+                    +
                   </Button>
                 </div>
-              </Field>
+              </div>
 
-              {/* Model */}
-              <Field label="Model">
-                <div className="flex gap-1.5">
+              {/* Model Dropdown + [+] */}
+              <div>
+                <label className="text-[11px] font-semibold text-foreground/80 block mb-1">
+                  4. Model *
+                </label>
+                <div className="flex gap-1 items-center">
                   <Select
                     value={selectedModelId}
                     onChange={(e) => setSelectedModelId(e.target.value)}
                     disabled={!selectedBrandId}
-                    className="flex-1 text-[12.5px]"
+                    className="flex-1 text-[12.5px] h-9"
+                    required
                   >
-                    <option value="">Select Model (Optional)...</option>
-                    {availableModels.map((m) => (
+                    <option value="" disabled>
+                      {!selectedBrandId
+                        ? "Select Brand First"
+                        : availableModels.length === 0
+                        ? "No Models ([+] to add)"
+                        : "Select Model..."}
+                    </option>
+                    {filteredModels.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.name}
+                        {m.name} {m.modelNumber ? `(${m.modelNumber})` : ""}
                       </option>
                     ))}
                   </Select>
@@ -514,20 +687,89 @@ export function QuickProductModal({
                     variant="outline"
                     size="sm"
                     disabled={!selectedBrandId}
-                    className="whitespace-nowrap text-[11px] h-9 px-2.5"
-                    onClick={() => setAddModelModalOpen(true)}
+                    className="h-9 px-2.5 font-bold text-sm leading-none bg-background shrink-0"
+                    onClick={() => {
+                      setInlineError("");
+                      setNewModelBrandId(selectedBrandId);
+                      setNewModelCatId(selectedCatId);
+                      setNewModelSubcatId(selectedSubcatId);
+                      setNewModelName("");
+                      setNewModelNumber("");
+                      setAddModelModalOpen(true);
+                    }}
+                    title="Add Model"
                   >
-                    + Add Model
+                    +
                   </Button>
                 </div>
-              </Field>
+              </div>
             </div>
+
+            {/* Quick Helper Button: + Add New Model button if brand is chosen */}
+            {selectedBrandId && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/40 text-[11.5px]">
+                <span className="text-muted-foreground">
+                  Can't find your model?
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-[11.5px] text-primary hover:text-primary font-semibold"
+                  onClick={() => {
+                    setInlineError("");
+                    setNewModelBrandId(selectedBrandId);
+                    setNewModelCatId(selectedCatId);
+                    setNewModelSubcatId(selectedSubcatId);
+                    setNewModelName("");
+                    setNewModelNumber("");
+                    setAddModelModalOpen(true);
+                  }}
+                >
+                  + Add New Model
+                </Button>
+              </div>
+            )}
           </div>
 
-          {/* STEP 3: PRODUCT SPECS & VARIANT */}
-          <div className="p-3.5 rounded-xl border border-border/70 bg-muted/20 space-y-3">
-            <div className="text-[12px] font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wide">
-              <span>3. Product Details & Variants</span>
+          {/* EXISTING VARIANTS VIEWER FOR SELECTED MODEL */}
+          {selectedModelId && (
+            <div className="p-3 rounded-xl border border-border/80 bg-muted/15 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-foreground">
+                  📦 Existing Variants for this Model ({existingVariantsForModel.length}):
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  One model can have multiple RAM / Storage / Color combinations
+                </span>
+              </div>
+              {existingVariantsForModel.length === 0 ? (
+                <div className="text-[12px] text-muted-foreground italic">
+                  No variants exist yet. Fill the specifications below to create the first variant.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {existingVariantsForModel.map((v) => (
+                    <Badge key={v.id} tone="info" className="text-[11px] py-1 px-2.5">
+                      {v.ram || "-"} / {v.storage || "-"} / {v.color || "-"} • ₹{v.sellingPrice} • Stock: {v.qty}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* DUPLICATE VARIANT ALERT */}
+          {duplicateVariant && (
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[12px] font-medium animate-in-soft">
+              ⚠️ A variant with RAM: {ram || "-"}, Storage: {storage || "-"}, and Color: {color || "-"} already exists ({duplicateVariant.name}). Please use a different combination.
+            </div>
+          )}
+
+          {/* 2. PRODUCT DETAILS & VARIANT FIELDS */}
+          <div className="p-3.5 rounded-xl border border-border/70 bg-card space-y-3 shadow-xs">
+            <div className="text-[12px] font-bold text-foreground flex items-center justify-between uppercase tracking-wide">
+              <span>Product Specifications & Variant Details</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -539,19 +781,19 @@ export function QuickProductModal({
                       setProductName(e.target.value);
                       setNameManuallyEdited(true);
                     }}
-                    placeholder="e.g. OPPO F33 Pro 8GB/256GB"
-                    className="h-9 text-[12.5px] font-medium"
+                    placeholder="e.g. Apple iPhone 16 (8GB/128GB Black)"
+                    className="h-9.5 text-[12.5px] font-medium"
                     required
                   />
                 </Field>
               </div>
 
-              <Field label="Variant">
+              <Field label="Variant Label (Optional)">
                 <Input
                   value={variant}
                   onChange={(e) => setVariant(e.target.value)}
-                  placeholder="e.g. 8GB/256GB"
-                  className="h-9 text-[12.5px]"
+                  placeholder="e.g. 8GB / 128GB / Black"
+                  className="h-9.5 text-[12.5px]"
                 />
               </Field>
             </div>
@@ -562,15 +804,15 @@ export function QuickProductModal({
                   value={ram}
                   onChange={(e) => setRam(e.target.value)}
                   placeholder="e.g. 8GB"
-                  className="h-8 text-[12px]"
+                  className="h-9 text-[12px]"
                 />
               </Field>
               <Field label="Storage">
                 <Input
                   value={storage}
                   onChange={(e) => setStorage(e.target.value)}
-                  placeholder="e.g. 256GB"
-                  className="h-8 text-[12px]"
+                  placeholder="e.g. 128GB"
+                  className="h-9 text-[12px]"
                 />
               </Field>
               <Field label="Color">
@@ -578,35 +820,36 @@ export function QuickProductModal({
                   value={color}
                   onChange={(e) => setColor(e.target.value)}
                   placeholder="e.g. Midnight Black"
-                  className="h-8 text-[12px]"
+                  className="h-9 text-[12px]"
                 />
               </Field>
-              <Field label="Warranty (Months)">
-                <Input
-                  type="number"
-                  min="0"
-                  value={warrantyMonths}
-                  onChange={(e) => setWarrantyMonths(Number(e.target.value))}
-                  className="h-8 text-[12px]"
-                />
+              <Field label="Tracking Mode">
+                <Select
+                  value={tracked ? "tracked" : "bulk"}
+                  onChange={(e) => setTracked(e.target.value === "tracked")}
+                  className="h-9 text-[12px]"
+                >
+                  <option value="tracked">IMEI / Serial (Mobile & Tablets)</option>
+                  <option value="bulk">Quantity (Accessories & Spares)</option>
+                </Select>
               </Field>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="SKU">
+              <Field label="SKU (Auto-generated if empty)">
                 <Input
                   value={sku}
                   onChange={(e) => setSku(e.target.value)}
-                  placeholder="Auto or Custom SKU"
-                  className="h-8 text-[12px] font-mono"
+                  placeholder="e.g. APP-IPH16-8128-BLK"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
-              <Field label="Barcode">
+              <Field label="Barcode (Optional)">
                 <Input
                   value={barcode}
                   onChange={(e) => setBarcode(e.target.value)}
                   placeholder="Scanned UPC / EAN"
-                  className="h-8 text-[12px] font-mono"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
               <Field label="HSN/SAC">
@@ -614,39 +857,19 @@ export function QuickProductModal({
                   value={hsn}
                   onChange={(e) => setHsn(e.target.value)}
                   placeholder="85171300"
-                  className="h-8 text-[12px] font-mono"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
             </div>
           </div>
 
-          {/* STEP 4: PRICING & TRACKING */}
-          <div className="p-3.5 rounded-xl border border-border/70 bg-muted/20 space-y-3">
-            <div className="text-[12px] font-bold text-foreground flex items-center justify-between uppercase tracking-wide">
-              <span>4. Pricing & Stock Tracking</span>
-              <div className="flex items-center gap-4 lowercase font-normal">
-                <label className="flex items-center gap-1.5 cursor-pointer text-[12px] font-medium text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={tracked}
-                    onChange={(e) => setTracked(e.target.checked)}
-                    className="size-4 rounded text-primary border-border focus:ring-primary"
-                  />
-                  <span>IMEI Tracking (Mobile / Serialized)</span>
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer text-[12px] text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={serialTracking}
-                    onChange={(e) => setSerialTracking(e.target.checked)}
-                    className="size-4 rounded text-primary border-border focus:ring-primary"
-                  />
-                  <span>Serial Track</span>
-                </label>
-              </div>
+          {/* 3. PRICING & STOCK SETTINGS */}
+          <div className="p-3.5 rounded-xl border border-border/70 bg-card space-y-3 shadow-xs">
+            <div className="text-[12px] font-bold text-foreground uppercase tracking-wide">
+              Pricing, Taxes & Inventory
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5">
               <Field label="Purchase Price (₹)">
                 <Input
                   type="number"
@@ -655,7 +878,7 @@ export function QuickProductModal({
                   value={purchasePrice}
                   onChange={(e) => setPurchasePrice(e.target.value === "" ? "" : Number(e.target.value))}
                   placeholder="0.00"
-                  className="h-8 text-[12px] font-mono"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
               <Field label="Selling Price (₹)">
@@ -666,7 +889,7 @@ export function QuickProductModal({
                   value={sellingPrice}
                   onChange={(e) => setSellingPrice(e.target.value === "" ? "" : Number(e.target.value))}
                   placeholder="0.00"
-                  className="h-8 text-[12px] font-mono"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
               <Field label="MRP (₹)">
@@ -677,29 +900,39 @@ export function QuickProductModal({
                   value={mrp}
                   onChange={(e) => setMrp(e.target.value === "" ? "" : Number(e.target.value))}
                   placeholder="0.00"
-                  className="h-8 text-[12px] font-mono"
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
               <Field label="GST Rate (%)">
                 <Select
                   value={gstRate}
                   onChange={(e) => setGstRate(Number(e.target.value))}
-                  className="h-8 text-[12px]"
+                  className="h-9 text-[12px]"
                 >
-                  <option value={0}>0% (Exempt)</option>
+                  <option value={0}>0%</option>
                   <option value={5}>5%</option>
                   <option value={12}>12%</option>
-                  <option value={18}>18% (Standard Mobile)</option>
+                  <option value={18}>18% (Standard)</option>
                   <option value={28}>28%</option>
                 </Select>
               </Field>
-              <Field label="Min Stock Alert">
+              <Field label="Opening Stock">
                 <Input
                   type="number"
                   min="0"
-                  value={minimumStock}
-                  onChange={(e) => setMinimumStock(Number(e.target.value))}
-                  className="h-8 text-[12px]"
+                  value={openingStock}
+                  onChange={(e) => setOpeningStock(e.target.value === "" ? "" : Number(e.target.value))}
+                  placeholder="0"
+                  className="h-9 text-[12px] font-mono"
+                />
+              </Field>
+              <Field label="Reorder Alert Level">
+                <Input
+                  type="number"
+                  min="0"
+                  value={reorderLevel}
+                  onChange={(e) => setReorderLevel(Number(e.target.value))}
+                  className="h-9 text-[12px] font-mono"
                 />
               </Field>
             </div>
@@ -708,14 +941,14 @@ export function QuickProductModal({
           {/* Action buttons */}
           <div className="flex items-center justify-between pt-2 border-t border-border">
             <div className="text-[11.5px] text-muted-foreground">
-              ℹ️ Saving creates the master product. Stock will only increase after the purchase is confirmed.
+              ⚡ Product variant will be saved to inventory and immediately available for Inward & POS.
             </div>
             <div className="flex items-center gap-2">
               <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" disabled={saving}>
-                {saving ? "Saving Product..." : "Save Product & Return to Inward"}
+              <Button type="submit" variant="primary" disabled={saving || Boolean(duplicateVariant)}>
+                {saving ? "Saving Product..." : "Save Product"}
               </Button>
             </div>
           </div>
@@ -725,22 +958,34 @@ export function QuickProductModal({
       {/* MINI MODAL: ADD CATEGORY */}
       {addCatModalOpen && (
         <Modal open={addCatModalOpen} onClose={() => setAddCatModalOpen(false)} title="+ Add New Category">
-          <form onSubmit={handleCreateCategory} className="space-y-4">
+          <form onSubmit={handleCreateCategory} className="space-y-3.5">
+            {inlineError && (
+              <div className="p-2.5 rounded-lg bg-destructive/10 text-destructive text-[12px] font-medium">
+                ⚠️ {inlineError}
+              </div>
+            )}
             <Field label="Category Name *">
               <Input
                 value={newCatName}
                 onChange={(e) => setNewCatName(e.target.value)}
-                placeholder="e.g. Mobile, Earbuds, Smart Watch"
+                placeholder="e.g. Mobile, Tablets, Accessories"
                 autoFocus
                 required
               />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
+            <Field label="Description (Optional)">
+              <Input
+                value={newCatDesc}
+                onChange={(e) => setNewCatDesc(e.target.value)}
+                placeholder="Short description of this category"
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button type="button" variant="ghost" onClick={() => setAddCatModalOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary">
-                Create & Select Category
+                Save Category
               </Button>
             </div>
           </form>
@@ -750,28 +995,48 @@ export function QuickProductModal({
       {/* MINI MODAL: ADD SUBCATEGORY */}
       {addSubcatModalOpen && (
         <Modal open={addSubcatModalOpen} onClose={() => setAddSubcatModalOpen(false)} title="+ Add New Subcategory">
-          <form onSubmit={handleCreateSubcategory} className="space-y-4">
-            <div className="text-[12px] text-muted-foreground">
-              Parent Category:{" "}
-              <strong className="text-foreground">
-                {hierarchy.find((c) => c.id === selectedCatId)?.name || "Selected"}
-              </strong>
-            </div>
+          <form onSubmit={handleCreateSubcategory} className="space-y-3.5">
+            {inlineError && (
+              <div className="p-2.5 rounded-lg bg-destructive/10 text-destructive text-[12px] font-medium">
+                ⚠️ {inlineError}
+              </div>
+            )}
+            <Field label="Belongs to Category *">
+              <Select
+                value={newSubcatCatId}
+                onChange={(e) => setNewSubcatCatId(e.target.value)}
+                required
+              >
+                <option value="">Select Category</option>
+                {hierarchy.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Subcategory Name *">
               <Input
                 value={newSubcatName}
                 onChange={(e) => setNewSubcatName(e.target.value)}
-                placeholder="e.g. Smart Phone, Feature Phone"
+                placeholder="e.g. Smart Phone, Feature Phone, Charger"
                 autoFocus
                 required
               />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
+            <Field label="Description (Optional)">
+              <Input
+                value={newSubcatDesc}
+                onChange={(e) => setNewSubcatDesc(e.target.value)}
+                placeholder="Short description"
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button type="button" variant="ghost" onClick={() => setAddSubcatModalOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary">
-                Create & Select Subcategory
+                Save Subcategory
               </Button>
             </div>
           </form>
@@ -781,28 +1046,60 @@ export function QuickProductModal({
       {/* MINI MODAL: ADD BRAND */}
       {addBrandModalOpen && (
         <Modal open={addBrandModalOpen} onClose={() => setAddBrandModalOpen(false)} title="+ Add New Brand">
-          <form onSubmit={handleCreateBrand} className="space-y-4">
-            <div className="text-[12px] text-muted-foreground">
-              Subcategory:{" "}
-              <strong className="text-foreground">
-                {availableSubcategories.find((s) => s.id === selectedSubcatId)?.name || "Selected"}
-              </strong>
-            </div>
+          <form onSubmit={handleCreateBrand} className="space-y-3.5">
+            {inlineError && (
+              <div className="p-2.5 rounded-lg bg-destructive/10 text-destructive text-[12px] font-medium">
+                ⚠️ {inlineError}
+              </div>
+            )}
             <Field label="Brand Name *">
               <Input
                 value={newBrandName}
                 onChange={(e) => setNewBrandName(e.target.value)}
-                placeholder="e.g. OPPO, Vivo, Samsung, Apple"
+                placeholder="e.g. Apple, Samsung, Vivo, OPPO"
                 autoFocus
                 required
               />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
+            <Field label="Category (Optional)">
+              <Select
+                value={newBrandCatId}
+                onChange={(e) => setNewBrandCatId(e.target.value)}
+              >
+                <option value="">Global / Select Category</option>
+                {hierarchy.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Subcategory (Optional)">
+              <Select
+                value={newBrandSubcatId}
+                onChange={(e) => setNewBrandSubcatId(e.target.value)}
+              >
+                <option value="">Global / Select Subcategory</option>
+                {availableSubcategories.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Logo URL (Optional)">
+              <Input
+                value={newBrandLogo}
+                onChange={(e) => setNewBrandLogo(e.target.value)}
+                placeholder="https://..."
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button type="button" variant="ghost" onClick={() => setAddBrandModalOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary">
-                Create & Select Brand
+                Save Brand
               </Button>
             </div>
           </form>
@@ -812,28 +1109,58 @@ export function QuickProductModal({
       {/* MINI MODAL: ADD MODEL */}
       {addModelModalOpen && (
         <Modal open={addModelModalOpen} onClose={() => setAddModelModalOpen(false)} title="+ Add New Model">
-          <form onSubmit={handleCreateModel} className="space-y-4">
-            <div className="text-[12px] text-muted-foreground">
-              Brand:{" "}
-              <strong className="text-foreground">
-                {availableBrands.find((b) => b.id === selectedBrandId)?.name || "Selected"}
-              </strong>
-            </div>
+          <form onSubmit={handleCreateModel} className="space-y-3.5">
+            {inlineError && (
+              <div className="p-2.5 rounded-lg bg-destructive/10 text-destructive text-[12px] font-medium">
+                ⚠️ {inlineError}
+              </div>
+            )}
+            <Field label="Belongs to Brand *">
+              <Select
+                value={newModelBrandId}
+                onChange={(e) => setNewModelBrandId(e.target.value)}
+                required
+              >
+                <option value="">Select Brand</option>
+                {availableBrands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <Field label="Model Name *">
               <Input
                 value={newModelName}
                 onChange={(e) => setNewModelName(e.target.value)}
-                placeholder="e.g. OPPO F33 Pro, Galaxy S24"
+                placeholder="e.g. iPhone 16, Galaxy S24 Ultra, Reno 12"
                 autoFocus
                 required
               />
             </Field>
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Model Number (Optional)">
+                <Input
+                  value={newModelNumber}
+                  onChange={(e) => setNewModelNumber(e.target.value)}
+                  placeholder="e.g. A3089"
+                />
+              </Field>
+              <Field label="Release Year">
+                <Input
+                  type="number"
+                  value={newModelYear ?? ""}
+                  onChange={(e) => setNewModelYear(Number(e.target.value) || undefined)}
+                  placeholder="2026"
+                />
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button type="button" variant="ghost" onClick={() => setAddModelModalOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" variant="primary">
-                Create & Select Model
+                Save Model
               </Button>
             </div>
           </form>

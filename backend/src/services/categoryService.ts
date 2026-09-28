@@ -11,8 +11,10 @@ export interface CreateCategoryInput {
   businessId?: string;
   name: string;
   slug?: string;
+  description?: string;
   icon?: string;
   active?: boolean;
+  throwOnDuplicate?: boolean;
 }
 
 export interface CreateSubcategoryInput {
@@ -20,25 +22,32 @@ export interface CreateSubcategoryInput {
   categoryId: string;
   name: string;
   slug?: string;
+  description?: string;
   active?: boolean;
+  throwOnDuplicate?: boolean;
 }
 
 export interface CreateBrandInput {
   businessId?: string;
+  categoryId?: string;
   subcategoryId?: string;
   name: string;
   slug?: string;
   logoUrl?: string;
   active?: boolean;
+  throwOnDuplicate?: boolean;
 }
 
 export interface CreateModelInput {
   businessId?: string;
   brandId: string;
+  categoryId?: string;
+  subcategoryId?: string;
   name: string;
   modelNumber?: string;
   releaseYear?: number;
   active?: boolean;
+  throwOnDuplicate?: boolean;
 }
 
 export function getCategories(db: DatabaseSync, businessId = "biz_default"): CategoryEntity[] {
@@ -50,6 +59,7 @@ export function getCategories(db: DatabaseSync, businessId = "biz_default"): Cat
     businessId: r.business_id,
     name: r.name,
     slug: r.slug,
+    description: r.description ?? undefined,
     icon: r.icon ?? undefined,
     active: Boolean(r.active),
     createdAt: r.created_at,
@@ -75,6 +85,7 @@ export function getSubcategories(
     categoryId: r.category_id,
     name: r.name,
     slug: r.slug,
+    description: r.description ?? undefined,
     active: Boolean(r.active),
     createdAt: r.created_at,
   }));
@@ -83,6 +94,7 @@ export function getSubcategories(
 export function getBrands(
   db: DatabaseSync,
   subcategoryId?: string,
+  categoryId?: string,
   businessId = "biz_default"
 ): BrandEntity[] {
   let query = "SELECT * FROM brands WHERE business_id = ?";
@@ -90,12 +102,16 @@ export function getBrands(
   if (subcategoryId) {
     query += " AND (subcategory_id = ? OR subcategory_id IS NULL)";
     params.push(subcategoryId);
+  } else if (categoryId) {
+    query += " AND (category_id = ? OR category_id IS NULL)";
+    params.push(categoryId);
   }
   query += " ORDER BY name ASC";
   const rows = db.prepare(query).all(...params) as any[];
   return rows.map((r) => ({
     id: r.id,
     businessId: r.business_id,
+    categoryId: r.category_id ?? undefined,
     subcategoryId: r.subcategory_id ?? undefined,
     name: r.name,
     slug: r.slug,
@@ -108,6 +124,8 @@ export function getBrands(
 export function getModels(
   db: DatabaseSync,
   brandId?: string,
+  categoryId?: string,
+  subcategoryId?: string,
   businessId = "biz_default"
 ): ModelEntity[] {
   let query = "SELECT * FROM models WHERE business_id = ?";
@@ -116,12 +134,22 @@ export function getModels(
     query += " AND brand_id = ?";
     params.push(brandId);
   }
+  if (categoryId) {
+    query += " AND (category_id = ? OR category_id IS NULL)";
+    params.push(categoryId);
+  }
+  if (subcategoryId) {
+    query += " AND (subcategory_id = ? OR subcategory_id IS NULL)";
+    params.push(subcategoryId);
+  }
   query += " ORDER BY name ASC";
   const rows = db.prepare(query).all(...params) as any[];
   return rows.map((r) => ({
     id: r.id,
     businessId: r.business_id,
     brandId: r.brand_id,
+    categoryId: r.category_id ?? undefined,
+    subcategoryId: r.subcategory_id ?? undefined,
     name: r.name,
     modelNumber: r.model_number ?? undefined,
     releaseYear: r.release_year ?? undefined,
@@ -141,21 +169,29 @@ export interface HierarchyTreeItem extends CategoryEntity {
 export function getCategoryHierarchy(db: DatabaseSync, businessId = "biz_default"): HierarchyTreeItem[] {
   const categories = getCategories(db, businessId);
   const subcategories = getSubcategories(db, undefined, businessId);
-  const brands = getBrands(db, undefined, businessId);
-  const models = getModels(db, undefined, businessId);
+  const brands = getBrands(db, undefined, undefined, businessId);
+  const models = getModels(db, undefined, undefined, undefined, businessId);
 
   return categories.map((cat) => {
     const catSubs = subcategories.filter((s) => s.categoryId === cat.id);
     return {
       ...cat,
       subcategories: catSubs.map((sub) => {
-        // Brands linked to this subcategory or global brands
-        const subBrands = brands.filter((b) => !b.subcategoryId || b.subcategoryId === sub.id);
+        // Brands linked to this subcategory or linked to this category or global
+        const subBrands = brands.filter((b) =>
+          (b.subcategoryId && b.subcategoryId === sub.id) ||
+          (!b.subcategoryId && b.categoryId && b.categoryId === cat.id) ||
+          (!b.subcategoryId && !b.categoryId)
+        );
         return {
           ...sub,
           brands: subBrands.map((b) => ({
             ...b,
-            models: models.filter((m) => m.brandId === b.id),
+            models: models.filter((m) =>
+              m.brandId === b.id &&
+              (!m.subcategoryId || m.subcategoryId === sub.id) &&
+              (!m.categoryId || m.categoryId === cat.id)
+            ),
           })),
         };
       }),
@@ -167,13 +203,17 @@ export function createCategory(db: DatabaseSync, input: CreateCategoryInput): Ca
   const businessId = input.businessId || "biz_default";
   const slug = input.slug || input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-  const existing = db.prepare("SELECT * FROM categories WHERE (business_id = ? OR business_id = 'biz_default') AND (name = ? OR slug = ?)").get(businessId, input.name, slug) as any;
+  const existing = db.prepare("SELECT * FROM categories WHERE (business_id = ? OR business_id = 'biz_default') AND (LOWER(name) = LOWER(?) OR slug = ?)").get(businessId, input.name.trim(), slug) as any;
   if (existing) {
+    if (input.throwOnDuplicate) {
+      throw new Error(`Category '${input.name.trim()}' already exists.`);
+    }
     return {
       id: existing.id,
       businessId: existing.business_id,
       name: existing.name,
       slug: existing.slug,
+      description: existing.description || input.description,
       icon: existing.icon || input.icon,
       active: Boolean(existing.active),
       createdAt: existing.created_at,
@@ -184,15 +224,16 @@ export function createCategory(db: DatabaseSync, input: CreateCategoryInput): Ca
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO categories (id, business_id, name, slug, icon, active, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, businessId, input.name, slug, input.icon ?? null, input.active !== false ? 1 : 0, now);
+    INSERT INTO categories (id, business_id, name, slug, description, icon, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, businessId, input.name.trim(), slug, input.description ?? null, input.icon ?? null, input.active !== false ? 1 : 0, now);
 
   return {
     id,
     businessId,
-    name: input.name,
+    name: input.name.trim(),
     slug,
+    description: input.description,
     icon: input.icon,
     active: input.active !== false,
     createdAt: now,
@@ -203,14 +244,18 @@ export function createSubcategory(db: DatabaseSync, input: CreateSubcategoryInpu
   const businessId = input.businessId || "biz_default";
   const slug = input.slug || input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-  const existing = db.prepare("SELECT * FROM subcategories WHERE category_id = ? AND (name = ? OR slug = ?)").get(input.categoryId, input.name, slug) as any;
+  const existing = db.prepare("SELECT * FROM subcategories WHERE category_id = ? AND (LOWER(name) = LOWER(?) OR slug = ?)").get(input.categoryId, input.name.trim(), slug) as any;
   if (existing) {
+    if (input.throwOnDuplicate) {
+      throw new Error(`Subcategory '${input.name.trim()}' already exists under this category.`);
+    }
     return {
       id: existing.id,
       businessId: existing.business_id,
       categoryId: existing.category_id,
       name: existing.name,
       slug: existing.slug,
+      description: existing.description || input.description,
       active: Boolean(existing.active),
       createdAt: existing.created_at,
     };
@@ -220,16 +265,17 @@ export function createSubcategory(db: DatabaseSync, input: CreateSubcategoryInpu
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO subcategories (id, business_id, category_id, name, slug, active, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, businessId, input.categoryId, input.name, slug, input.active !== false ? 1 : 0, now);
+    INSERT INTO subcategories (id, business_id, category_id, name, slug, description, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, businessId, input.categoryId, input.name.trim(), slug, input.description ?? null, input.active !== false ? 1 : 0, now);
 
   return {
     id,
     businessId,
     categoryId: input.categoryId,
-    name: input.name,
+    name: input.name.trim(),
     slug,
+    description: input.description,
     active: input.active !== false,
     createdAt: now,
   };
@@ -239,15 +285,23 @@ export function createBrand(db: DatabaseSync, input: CreateBrandInput): BrandEnt
   const businessId = input.businessId || "biz_default";
   const slug = input.slug || input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-  const existing = db.prepare("SELECT * FROM brands WHERE (business_id = ? OR business_id = 'biz_default') AND (name = ? OR slug = ?)").get(businessId, input.name, slug) as any;
+  const existing = db.prepare("SELECT * FROM brands WHERE (business_id = ? OR business_id = 'biz_default') AND (LOWER(name) = LOWER(?) OR slug = ?)").get(businessId, input.name.trim(), slug) as any;
   if (existing) {
+    if (input.throwOnDuplicate) {
+      throw new Error(`Brand '${input.name.trim()}' already exists.`);
+    }
     if (input.subcategoryId && existing.subcategory_id !== input.subcategoryId) {
       db.prepare("UPDATE brands SET subcategory_id = ? WHERE id = ?").run(input.subcategoryId, existing.id);
       existing.subcategory_id = input.subcategoryId;
     }
+    if (input.categoryId && existing.category_id !== input.categoryId) {
+      db.prepare("UPDATE brands SET category_id = ? WHERE id = ?").run(input.categoryId, existing.id);
+      existing.category_id = input.categoryId;
+    }
     return {
       id: existing.id,
       businessId: existing.business_id,
+      categoryId: existing.category_id,
       subcategoryId: existing.subcategory_id,
       name: existing.name,
       slug: existing.slug,
@@ -261,15 +315,16 @@ export function createBrand(db: DatabaseSync, input: CreateBrandInput): BrandEnt
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO brands (id, business_id, subcategory_id, name, slug, logo_url, active, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, businessId, input.subcategoryId ?? null, input.name, slug, input.logoUrl ?? null, input.active !== false ? 1 : 0, now);
+    INSERT INTO brands (id, business_id, category_id, subcategory_id, name, slug, logo_url, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, businessId, input.categoryId ?? null, input.subcategoryId ?? null, input.name.trim(), slug, input.logoUrl ?? null, input.active !== false ? 1 : 0, now);
 
   return {
     id,
     businessId,
+    categoryId: input.categoryId,
     subcategoryId: input.subcategoryId,
-    name: input.name,
+    name: input.name.trim(),
     slug,
     logoUrl: input.logoUrl,
     active: input.active !== false,
@@ -279,12 +334,17 @@ export function createBrand(db: DatabaseSync, input: CreateBrandInput): BrandEnt
 
 export function createModel(db: DatabaseSync, input: CreateModelInput): ModelEntity {
   const businessId = input.businessId || "biz_default";
-  const existing = db.prepare("SELECT * FROM models WHERE brand_id = ? AND name = ?").get(input.brandId, input.name) as any;
+  const existing = db.prepare("SELECT * FROM models WHERE brand_id = ? AND LOWER(name) = LOWER(?)").get(input.brandId, input.name.trim()) as any;
   if (existing) {
+    if (input.throwOnDuplicate) {
+      throw new Error(`Model '${input.name.trim()}' already exists under this brand.`);
+    }
     return {
       id: existing.id,
       businessId: existing.business_id,
       brandId: existing.brand_id,
+      categoryId: existing.category_id,
+      subcategoryId: existing.subcategory_id,
       name: existing.name,
       modelNumber: existing.model_number,
       releaseYear: existing.release_year,
@@ -297,15 +357,17 @@ export function createModel(db: DatabaseSync, input: CreateModelInput): ModelEnt
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO models (id, business_id, brand_id, name, model_number, release_year, active, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, businessId, input.brandId, input.name, input.modelNumber ?? null, input.releaseYear ?? null, input.active !== false ? 1 : 0, now);
+    INSERT INTO models (id, business_id, brand_id, category_id, subcategory_id, name, model_number, release_year, active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, businessId, input.brandId, input.categoryId ?? null, input.subcategoryId ?? null, input.name.trim(), input.modelNumber ?? null, input.releaseYear ?? null, input.active !== false ? 1 : 0, now);
 
   return {
     id,
     businessId,
     brandId: input.brandId,
-    name: input.name,
+    categoryId: input.categoryId,
+    subcategoryId: input.subcategoryId,
+    name: input.name.trim(),
     modelNumber: input.modelNumber,
     releaseYear: input.releaseYear,
     active: input.active !== false,

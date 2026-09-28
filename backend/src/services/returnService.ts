@@ -254,7 +254,7 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
 
     const updateUnitStmt = db.prepare(`
       UPDATE units
-      SET status = 'RETURNED_TO_DEALER'
+      SET status = 'PURCHASE_RETURNED'
       WHERE id = ?
     `);
 

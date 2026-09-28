@@ -10,6 +10,11 @@ export const productsApi = {
   updateProduct: (id: string, patch: Partial<Product>) =>
     apiClient.patch<Product>(`/api/products/${id}`, patch),
 
+  deleteProduct: (id: string, force = false) =>
+    apiClient.delete<{ success: boolean; id: string; name: string }>(
+      `/api/products/${id}${force ? "?force=true" : ""}`
+    ),
+
   addUnits: (productId: string, rows: Array<Omit<Unit, "id" | "productId" | "status">>) =>
     apiClient.post<Unit[]>(`/api/products/${productId}/units`, { rows }),
 

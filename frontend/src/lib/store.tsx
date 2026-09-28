@@ -50,6 +50,7 @@ interface StoreValue {
   addSupplier: (s: Omit<Supplier, "id">) => Supplier;
   addProduct: (p: Omit<Product, "id">) => Product;
   updateProduct: (id: string, patch: Partial<Product>) => void;
+  deleteProduct: (id: string, force?: boolean) => Promise<void>;
   addUnits: (productId: string, rows: Array<Omit<Unit, "id" | "productId" | "status">>) => void;
   setUnitStatus: (unitId: string, status: Unit["status"]) => void;
   recordSale: (input: {
@@ -255,6 +256,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }));
 
     productsApi.updateProduct(id, patch).catch(() => {});
+  }, []);
+
+  const deleteProduct: StoreValue["deleteProduct"] = useCallback(async (id, force = false) => {
+    await productsApi.deleteProduct(id, force);
+    setDb((d) => ({
+      ...d,
+      products: d.products.filter((p) => p.id !== id),
+      units: d.units.filter((u) => u.productId !== id),
+    }));
   }, []);
 
   const addUnits: StoreValue["addUnits"] = useCallback((productId, rows) => {
@@ -549,6 +559,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addSupplier,
       addProduct,
       updateProduct,
+      deleteProduct,
       addUnits,
       setUnitStatus,
       recordSale,
@@ -571,6 +582,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addSupplier,
       addProduct,
       updateProduct,
+      deleteProduct,
       addUnits,
       setUnitStatus,
       recordSale,

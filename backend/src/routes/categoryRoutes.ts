@@ -33,7 +33,11 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
           return jsonResponse({ error: "Unauthorized: Missing CATEGORY_CREATE permission", success: false }, 403);
         }
       }
-      return jsonResponse(createCategory(db, body), 201);
+      try {
+        return jsonResponse(createCategory(db, { ...body, throwOnDuplicate: body.throwOnDuplicate ?? true }), 201);
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || "Failed to create category", success: false }, 400);
+      }
     }
   }
 
@@ -65,7 +69,11 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
           return jsonResponse({ error: "Unauthorized: Missing SUBCATEGORY_CREATE permission", success: false }, 403);
         }
       }
-      return jsonResponse(createSubcategory(db, body), 201);
+      try {
+        return jsonResponse(createSubcategory(db, { ...body, throwOnDuplicate: body.throwOnDuplicate ?? true }), 201);
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || "Failed to create subcategory", success: false }, 400);
+      }
     }
   }
 
@@ -86,7 +94,8 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
   if (pathname === "/api/brands") {
     if (method === "GET") {
       const subcategoryId = url.searchParams.get("subcategoryId") || undefined;
-      return jsonResponse(getBrands(db, subcategoryId));
+      const categoryId = url.searchParams.get("categoryId") || undefined;
+      return jsonResponse(getBrands(db, subcategoryId, categoryId));
     }
     if (method === "POST") {
       const body = await request.json();
@@ -97,7 +106,11 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
           return jsonResponse({ error: "Unauthorized: Missing BRAND_CREATE permission", success: false }, 403);
         }
       }
-      return jsonResponse(createBrand(db, body), 201);
+      try {
+        return jsonResponse(createBrand(db, { ...body, throwOnDuplicate: body.throwOnDuplicate ?? true }), 201);
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || "Failed to create brand", success: false }, 400);
+      }
     }
   }
 
@@ -118,7 +131,9 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
   if (pathname === "/api/models") {
     if (method === "GET") {
       const brandId = url.searchParams.get("brandId") || undefined;
-      return jsonResponse(getModels(db, brandId));
+      const categoryId = url.searchParams.get("categoryId") || undefined;
+      const subcategoryId = url.searchParams.get("subcategoryId") || undefined;
+      return jsonResponse(getModels(db, brandId, categoryId, subcategoryId));
     }
     if (method === "POST") {
       const body = await request.json();
@@ -129,7 +144,11 @@ export async function categoryRoutes({ request, url, pathname, method, db }: Rou
           return jsonResponse({ error: "Unauthorized: Missing MODEL_CREATE permission", success: false }, 403);
         }
       }
-      return jsonResponse(createModel(db, body), 201);
+      try {
+        return jsonResponse(createModel(db, { ...body, throwOnDuplicate: body.throwOnDuplicate ?? true }), 201);
+      } catch (err: any) {
+        return jsonResponse({ error: err.message || "Failed to create model", success: false }, 400);
+      }
     }
   }
 
