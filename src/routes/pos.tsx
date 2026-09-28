@@ -20,7 +20,7 @@ import { AdminPinModal } from "@/components/AdminPinModal";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
 import { EMICalculator } from "@/components/EMICalculator";
-import { Calculator, Plus, Trash2, Zap } from "lucide-react";
+import { Calculator, Plus, Trash2, Zap, Eye, FileText } from "lucide-react";
 import { PosCustomerCard } from "@/components/pos/PosCustomerCard";
 import { QuickAddCustomerModal } from "@/components/pos/QuickAddCustomerModal";
 import { PosSuccessModal } from "@/components/pos/PosSuccessModal";
@@ -118,6 +118,32 @@ function POS() {
   // Success modal state
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [lastCompletedSale, setLastCompletedSale] = useState<Sale | null>(null);
+
+  // Recent Bills modal state
+  const [recentBillsModalOpen, setRecentBillsModalOpen] = useState(false);
+  const [billSearchQuery, setBillSearchQuery] = useState("");
+
+  const recentSales = useMemo(() => {
+    const list = (db.sales || []).filter((s) => !s.quotation && s.status !== "VOID");
+    return list.slice().sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [db.sales]);
+
+  const filteredBills = useMemo(() => {
+    if (!billSearchQuery.trim()) return recentSales.slice(0, 30);
+    const q = billSearchQuery.toLowerCase().trim();
+    return recentSales
+      .filter((s) => {
+        const cust = db.customers.find((c) => c.id === s.customerId);
+        const custName = (cust?.name || "").toLowerCase();
+        const custPhone = (cust?.phone || cust?.mobile || "").toLowerCase();
+        const invNo = (s.invoiceNo || "").toLowerCase();
+        const itemsMatch = (s.items || []).some(
+          (it) => it.name.toLowerCase().includes(q) || (it.imei && it.imei.toLowerCase().includes(q)),
+        );
+        return invNo.includes(q) || custName.includes(q) || custPhone.includes(q) || itemsMatch;
+      })
+      .slice(0, 30);
+  }, [recentSales, billSearchQuery, db.customers]);
 
   // Custom Paid amount (allows partial payments)
   const [customPaidAmount, setCustomPaidAmount] = useState<number | null>(null);
@@ -664,6 +690,9 @@ function POS() {
         } else if (changeCustomerModalOpen) {
           setChangeCustomerModalOpen(false);
           e.preventDefault();
+        } else if (recentBillsModalOpen) {
+          setRecentBillsModalOpen(false);
+          e.preventDefault();
         } else if (collectDueOpen) {
           setCollectDueOpen(false);
           e.preventDefault();
@@ -718,7 +747,7 @@ function POS() {
         }
       } else if (e.key === "F8") {
         e.preventDefault();
-        setChangeCustomerModalOpen(true);
+        setRecentBillsModalOpen(true);
       } else if (e.key === "F9") {
         e.preventDefault();
         setScannerOpen(true);
@@ -827,6 +856,7 @@ function POS() {
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-[10.5px] font-semibold text-foreground">F5 Pay</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-[10.5px] font-semibold text-foreground">F6 Disc</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-[10.5px] font-semibold text-foreground">F7 Print</span>
+          <span className="rounded bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 font-mono text-[10.5px] font-bold">F8 Bills</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-[10.5px] font-semibold text-foreground">F9 Scan</span>
           <span className="rounded bg-primary/10 text-primary px-2 py-0.5 font-mono text-[10.5px] font-bold">Ctrl+Enter Bill</span>
         </div>
@@ -835,6 +865,17 @@ function POS() {
           {scanStatus && (
             <span className="text-[11px] font-medium text-primary animate-pulse">{scanStatus}</span>
           )}
+
+          {/* VIEW RECENT BILLS BUTTON */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setRecentBillsModalOpen(true)}
+            className="h-7.5 text-[11.5px] gap-1.5 font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
+            title="View & Reprint past sales bills (F8)"
+          >
+            <FileText className="size-3.5" /> Recent Bills (F8)
+          </Button>
 
           {/* FAST BILL MODE TOGGLE */}
           <button
@@ -1828,6 +1869,108 @@ function POS() {
             }}
             onClose={() => setEmiCalculatorOpen(false)}
           />
+        </Modal>
+      )}
+      {/* RECENT BILLS / VIEW BILL MODAL */}
+      {recentBillsModalOpen && (
+        <Modal
+          open={recentBillsModalOpen}
+          title="Recent Bills & Invoices — View / Print"
+          onClose={() => setRecentBillsModalOpen(false)}
+          wide
+        >
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative flex-1 min-w-[240px]">
+                <Input
+                  placeholder="Search by Invoice #, Customer name, Mobile or IMEI..."
+                  value={billSearchQuery}
+                  onChange={(e) => setBillSearchQuery(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Showing <span className="font-bold text-foreground">{filteredBills.length}</span> bills
+              </div>
+            </div>
+
+            {filteredBills.length === 0 ? (
+              <div className="py-12 text-center text-muted-foreground text-sm">
+                No matching sales bills found.
+              </div>
+            ) : (
+              <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-border/70 divide-y divide-border/60">
+                {filteredBills.map((s) => {
+                  const cust = db.customers.find((c) => c.id === s.customerId);
+                  const isPaid = s.paid >= s.total - 0.01;
+                  const isPartial = s.paid > 0 && !isPaid;
+                  return (
+                    <div
+                      key={s.id}
+                      className="flex flex-wrap items-center justify-between gap-3 p-3 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-primary text-[13px]">{s.invoiceNo}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {new Date(s.date).toLocaleDateString("en-IN", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          <Badge
+                            tone={isPaid ? "success" : isPartial ? "warning" : "danger"}
+                            className="text-[10px]"
+                          >
+                            {isPaid ? "Paid" : isPartial ? "Partial" : "Due"}
+                          </Badge>
+                          {s.invoiceType && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                              {s.invoiceType}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs font-semibold text-foreground mt-0.5">
+                          👤 {cust?.name || "Walk-in Customer"}
+                          {(cust?.phone || cust?.mobile) && cust.phone !== "—" && (
+                            <span className="ml-2 font-mono text-muted-foreground font-normal">
+                              ({cust.phone || cust.mobile})
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate max-w-lg mt-0.5">
+                          {(s.items || []).map((it) => `${it.name} (x${it.qty})`).join(", ")}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="font-mono font-black text-[14px] text-foreground">{inr(s.total)}</div>
+                          <div className="text-[10.5px] text-muted-foreground">
+                            Paid: {inr(s.paid)} {s.total > s.paid && `· Due: ${inr(s.total - s.paid)}`}
+                          </div>
+                        </div>
+
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setInvoice(s);
+                            setRecentBillsModalOpen(false);
+                          }}
+                          className="gap-1.5 h-8 text-xs font-bold bg-primary text-primary-foreground shadow-xs"
+                        >
+                          <Eye className="size-3.5" /> View / Print Bill
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </Modal>
       )}
     </div>

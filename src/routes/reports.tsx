@@ -27,7 +27,11 @@ import type {
   DebitNoteReportRow,
   CustomerCreditBalanceRow,
   DealerCreditBalanceRow,
+  Sale,
 } from "@/lib/types";
+import { InvoiceModal } from "@/components/invoice/InvoiceModal";
+import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
+import { Eye, FileText, Printer, Search, Calendar, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -39,8 +43,121 @@ export const Route = createFileRoute("/reports")({
 function ReportsPage() {
   const { db } = useStore();
   const [activeTab, setActiveTab] = useState<
-    "overview" | "item_wise" | "imei_wise" | "emi" | "dealers" | "categories" | "gst" | "credit_notes" | "debit_notes" | "customer_credit" | "dealer_credit"
-  >("overview");
+    | "overview"
+    | "invoices"
+    | "item_wise"
+    | "imei_wise"
+    | "emi"
+    | "dealers"
+    | "categories"
+    | "gst"
+    | "credit_notes"
+    | "debit_notes"
+    | "customer_credit"
+    | "dealer_credit"
+  >(() => {
+    if (typeof window !== "undefined") {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab === "invoices" || tab === "bills") return "invoices";
+    }
+    return "overview";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab === "invoices" || tab === "bills") {
+        setActiveTab("invoices");
+      }
+    }
+  }, []);
+
+  // Invoices & Bills Register State
+  const [selectedInvoiceSale, setSelectedInvoiceSale] = useState<Sale | null>(null);
+  const [invoiceSearchQuery, setInvoiceSearchQuery] = useState("");
+  const [invoiceDateRange, setInvoiceDateRange] = useState<"all" | "today" | "7d" | "30d" | "custom">("all");
+  const [invoiceCustomFrom, setInvoiceCustomFrom] = useState(todayISO());
+  const [invoiceCustomTo, setInvoiceCustomTo] = useState(todayISO());
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<"ALL" | "PAID" | "PARTIAL" | "DUE">("ALL");
+  const [invoiceTypeFilter, setInvoiceTypeFilter] = useState<"ALL" | "GST" | "NON_GST">("ALL");
+
+  const filteredSalesInvoices = useMemo(() => {
+    const list = [...(db.sales || [])].filter((s) => !s.quotation && s.status !== "VOID");
+    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return list.filter((s) => {
+      if (invoiceDateRange === "today") {
+        const today = todayISO();
+        if (!s.date.startsWith(today)) return false;
+      } else if (invoiceDateRange === "7d") {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        if (new Date(s.date) < d) return false;
+      } else if (invoiceDateRange === "30d") {
+        const d = new Date();
+        d.setDate(d.getDate() - 30);
+        if (new Date(s.date) < d) return false;
+      } else if (invoiceDateRange === "custom") {
+        const saleD = s.date.slice(0, 10);
+        if (invoiceCustomFrom && saleD < invoiceCustomFrom) return false;
+        if (invoiceCustomTo && saleD > invoiceCustomTo) return false;
+      }
+
+      if (invoiceTypeFilter !== "ALL") {
+        if (s.invoiceType !== invoiceTypeFilter) return false;
+      }
+
+      const isPaid = s.paid >= s.total - 0.01;
+      const isPartial = s.paid > 0 && !isPaid;
+      const isDue = s.paid < 0.01;
+      if (invoiceStatusFilter === "PAID" && !isPaid) return false;
+      if (invoiceStatusFilter === "PARTIAL" && !isPartial) return false;
+      if (invoiceStatusFilter === "DUE" && (isPaid || !isDue)) return false;
+
+      if (invoiceSearchQuery.trim()) {
+        const q = invoiceSearchQuery.toLowerCase().trim();
+        const cust = db.customers.find((c) => c.id === s.customerId);
+        const custName = (cust?.name || "").toLowerCase();
+        const custPhone = (cust?.phone || cust?.mobile || "").toLowerCase();
+        const invNo = (s.invoiceNo || "").toLowerCase();
+        const itemsMatch = (s.items || []).some(
+          (it) => it.name.toLowerCase().includes(q) || (it.imei && it.imei.toLowerCase().includes(q)),
+        );
+        if (!invNo.includes(q) && !custName.includes(q) && !custPhone.includes(q) && !itemsMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    db.sales,
+    db.customers,
+    invoiceDateRange,
+    invoiceCustomFrom,
+    invoiceCustomTo,
+    invoiceTypeFilter,
+    invoiceStatusFilter,
+    invoiceSearchQuery,
+  ]);
+
+  const invoicesSummary = useMemo(() => {
+    let totalSales = 0;
+    let totalPaid = 0;
+    let totalDue = 0;
+    filteredSalesInvoices.forEach((s) => {
+      totalSales += s.total || 0;
+      totalPaid += s.paid || 0;
+      const due = Math.max(0, (s.total || 0) - (s.paid || 0));
+      totalDue += due;
+    });
+    return {
+      count: filteredSalesInvoices.length,
+      totalSales,
+      totalPaid,
+      totalDue,
+    };
+  }, [filteredSalesInvoices]);
 
   // Remote reports data
   const [emiReport, setEmiReport] = useState<any>(null);
@@ -623,6 +740,17 @@ function ReportsPage() {
           Overview & P&L
         </button>
         <button
+          onClick={() => setActiveTab("invoices")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === "invoices"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <FileText className="size-3.5" />
+          <span>Bills & Invoices Register</span>
+        </button>
+        <button
           onClick={() => setActiveTab("item_wise")}
           className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "item_wise"
@@ -821,6 +949,233 @@ function ReportsPage() {
                     </Td>
                   </Row>
                 ))}
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* BILLS & SALES INVOICES REGISTER TAB */}
+      {activeTab === "invoices" && (
+        <div className="space-y-4">
+          {/* Top Metrics Cards */}
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Total Invoices Count" value={`${invoicesSummary.count} bills`} />
+            <Stat label="Total Sales Billed" value={inr(invoicesSummary.totalSales)} tone="primary" />
+            <Stat label="Total Amount Collected" value={inr(invoicesSummary.totalPaid)} tone="success" />
+            <Stat
+              label="Outstanding Customer Due"
+              value={inr(invoicesSummary.totalDue)}
+              tone={invoicesSummary.totalDue > 0 ? "danger" : "default"}
+            />
+          </section>
+
+          {/* Filter & Search Bar */}
+          <Card>
+            <div className="p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex-1 min-w-[280px]">
+                  <Input
+                    placeholder="Search by Invoice #, Customer Name, Mobile Number, or Item/IMEI..."
+                    value={invoiceSearchQuery}
+                    onChange={(e) => setInvoiceSearchQuery(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Date Quick Filters */}
+                  {(["all", "today", "7d", "30d", "custom"] as const).map((r) => (
+                    <Button
+                      key={r}
+                      size="sm"
+                      variant={invoiceDateRange === r ? "primary" : "secondary"}
+                      onClick={() => setInvoiceDateRange(r)}
+                      className="text-xs capitalize h-8"
+                    >
+                      {r === "all" ? "All Time" : r === "7d" ? "Last 7 Days" : r === "30d" ? "Last 30 Days" : r}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {invoiceDateRange === "custom" && (
+                <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground font-semibold">From:</span>
+                    <input
+                      type="date"
+                      value={invoiceCustomFrom}
+                      onChange={(e) => setInvoiceCustomFrom(e.target.value)}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs bg-background text-foreground"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground font-semibold">To:</span>
+                    <input
+                      type="date"
+                      value={invoiceCustomTo}
+                      onChange={(e) => setInvoiceCustomTo(e.target.value)}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs bg-background text-foreground"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground font-semibold">Status:</span>
+                    <select
+                      value={invoiceStatusFilter}
+                      onChange={(e) => setInvoiceStatusFilter(e.target.value as any)}
+                      className="rounded-lg border border-border px-2 py-1 bg-background text-foreground text-xs"
+                    >
+                      <option value="ALL">All Payment Statuses</option>
+                      <option value="PAID">Fully Paid</option>
+                      <option value="PARTIAL">Partial Paid</option>
+                      <option value="DUE">Unpaid / Full Due</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground font-semibold">Tax Type:</span>
+                    <select
+                      value={invoiceTypeFilter}
+                      onChange={(e) => setInvoiceTypeFilter(e.target.value as any)}
+                      className="rounded-lg border border-border px-2 py-1 bg-background text-foreground text-xs"
+                    >
+                      <option value="ALL">All Tax Invoices</option>
+                      <option value="GST">GST Tax Invoice</option>
+                      <option value="NON_GST">Non-GST Retail Bill</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="text-muted-foreground text-xs">
+                  Showing <span className="font-bold text-foreground">{filteredSalesInvoices.length}</span> bills
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Bills List / Table */}
+          <Card>
+            <CardHead
+              title="Sales Bills & Counter Invoices"
+              sub="Click 'View Bill' on any invoice to view, thermal print, A4 print, download PDF, or share on WhatsApp"
+            />
+            {filteredSalesInvoices.length === 0 ? (
+              <Empty
+                title="No sales bills match the criteria"
+                sub="Try changing the date filter or search query, or create a new bill at the POS terminal."
+              />
+            ) : (
+              <Table
+                head={
+                  <tr>
+                    <th>Date & Time</th>
+                    <th>Invoice No</th>
+                    <th>Customer</th>
+                    <th>Items Sold</th>
+                    <th>Mode</th>
+                    <th className="text-right">Total Amount</th>
+                    <th className="text-right">Paid</th>
+                    <th className="text-right">Balance Due</th>
+                    <th>Status</th>
+                    <th className="text-right">Action</th>
+                  </tr>
+                }
+              >
+                {filteredSalesInvoices.map((s) => {
+                  const cust = db.customers.find((c) => c.id === s.customerId);
+                  const isPaid = s.paid >= s.total - 0.01;
+                  const isPartial = s.paid > 0 && !isPaid;
+                  const due = Math.max(0, s.total - s.paid);
+                  const modes = s.payments?.map((p) => p.mode) || [];
+                  const displayMode = modes.length > 1 ? "Split" : (modes[0] || (s.isEmi ? "EMI" : "Cash"));
+
+                  return (
+                    <Row key={s.id}>
+                      <Td className="whitespace-nowrap text-xs text-muted-foreground">
+                        {new Date(s.date).toLocaleDateString("en-IN", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                        <div className="text-[10px] text-muted-foreground font-mono">
+                          {new Date(s.date).toLocaleTimeString("en-IN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </div>
+                      </Td>
+                      <Td className="font-mono font-bold text-primary whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>{s.invoiceNo}</span>
+                          <span className="text-[9.5px] px-1 py-0.2 rounded bg-muted text-muted-foreground font-sans">
+                            {s.invoiceType || "GST"}
+                          </span>
+                        </div>
+                      </Td>
+                      <Td className="text-xs">
+                        <div className="font-semibold text-foreground">{cust?.name || "Walk-in Customer"}</div>
+                        {(cust?.phone || cust?.mobile) && cust.phone !== "—" && (
+                          <div className="text-[11px] font-mono text-muted-foreground">
+                            {cust.phone || cust.mobile}
+                          </div>
+                        )}
+                      </Td>
+                      <Td className="text-xs max-w-xs truncate" title={s.items?.map((i) => i.name).join(", ")}>
+                        <span className="font-medium text-foreground">
+                          {s.items?.[0]?.name}
+                          {s.items && s.items.length > 1 && (
+                            <span className="text-muted-foreground font-normal"> +{s.items.length - 1} more</span>
+                          )}
+                        </span>
+                        <div className="text-[10.5px] text-muted-foreground">
+                          {s.items?.reduce((sum, it) => sum + it.qty, 0)} unit(s)
+                        </div>
+                      </Td>
+                      <Td className="text-xs">
+                        <Badge tone={s.isEmi ? "warning" : "default"} className="text-[10px]">
+                          {displayMode}
+                        </Badge>
+                      </Td>
+                      <Td className="text-right font-mono font-bold text-foreground whitespace-nowrap">
+                        {inr(s.total)}
+                      </Td>
+                      <Td className="text-right font-mono text-emerald-600 font-semibold whitespace-nowrap">
+                        {inr(s.paid)}
+                      </Td>
+                      <Td className="text-right font-mono whitespace-nowrap">
+                        {due > 0 ? (
+                          <span className="text-rose-600 font-bold">{inr(due)}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </Td>
+                      <Td whitespace-nowrap>
+                        <Badge
+                          tone={isPaid ? "success" : isPartial ? "warning" : "danger"}
+                          className="text-[10px]"
+                        >
+                          {isPaid ? "Paid" : isPartial ? "Partial" : "Due"}
+                        </Badge>
+                      </Td>
+                      <Td className="text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            onClick={() => setSelectedInvoiceSale(s)}
+                            className="h-7 px-2.5 text-xs font-bold gap-1 bg-primary text-primary-foreground shadow-xs"
+                            title="View, Print & Share Invoice Bill"
+                          >
+                            <Eye className="size-3.5" /> View Bill
+                          </Button>
+                        </div>
+                      </Td>
+                    </Row>
+                  );
+                })}
               </Table>
             )}
           </Card>
@@ -1825,6 +2180,15 @@ function ReportsPage() {
           </div>
         )}
       </Modal>
+
+      {/* UNIVERSAL INVOICE MODAL FOR BILL VIEW / PRINT / SHARE */}
+      {selectedInvoiceSale && (
+        <InvoiceModal
+          open={Boolean(selectedInvoiceSale)}
+          onClose={() => setSelectedInvoiceSale(null)}
+          {...saleToInvoiceProps(selectedInvoiceSale, db)}
+        />
+      )}
     </div>
   );
 }

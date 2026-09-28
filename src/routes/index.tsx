@@ -26,11 +26,13 @@ import {
   ArrowDownLeft,
   Filter,
   CheckCircle2,
+  Eye,
 } from "lucide-react";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
 import type { Sale } from "@/lib/types";
 import { useStore } from "@/lib/store";
+import { salesApi } from "@/services/api/salesApi";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -177,6 +179,22 @@ export function DashboardPage() {
   const [customTo, setCustomTo] = useState(todayISO());
   const [topSellingRange, setTopSellingRange] = useState<"today" | "7d" | "30d">("7d");
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+
+  const handleOpenBill = async (billId: string, invoiceNo: string) => {
+    const cached = db.sales.find((s) => s.id === billId || s.invoiceNo === invoiceNo);
+    if (cached) {
+      setSelectedSale(cached);
+      return;
+    }
+    try {
+      const sale = await salesApi.getSale(billId);
+      if (sale) {
+        setSelectedSale(sale);
+      }
+    } catch (e) {
+      console.error("Failed to load sale for bill view", e);
+    }
+  };
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardData | null>(null);
@@ -1131,8 +1149,13 @@ export function DashboardPage() {
                 <h3 className="text-sm font-bold text-foreground">RECENT BILLS</h3>
                 <p className="text-[11px] text-muted-foreground">Counter sales invoices & payments</p>
               </div>
-              <Link to="/reports" className="text-xs font-bold text-primary hover:underline">
-                [View All]
+              <Link
+                to="/reports"
+                search={{ tab: "invoices" }}
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
+              >
+                <span>[View All Bills]</span>
+                <ArrowRight className="size-3" />
               </Link>
             </div>
 
@@ -1141,9 +1164,21 @@ export function DashboardPage() {
             ) : (
               <div className="divide-y divide-border/60 text-xs">
                 {recentBills.map((bill) => (
-                  <div key={bill.id} className="flex items-center justify-between py-2">
+                  <div
+                    key={bill.id}
+                    onClick={() => handleOpenBill(bill.id, bill.invoiceNo)}
+                    className="flex items-center justify-between py-2.5 px-2 -mx-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer group"
+                    title="Click to view & print invoice"
+                  >
                     <div className="min-w-0 pr-2">
-                      <div className="font-mono font-bold text-primary">{bill.invoiceNo}</div>
+                      <div className="font-mono font-bold text-primary group-hover:underline flex items-center gap-1.5">
+                        <span>{bill.invoiceNo}</span>
+                        {bill.time && (
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            {bill.time.includes("T") ? bill.time.split("T")[0] : bill.time}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[10.5px] text-muted-foreground truncate">{bill.customer}</div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1154,6 +1189,17 @@ export function DashboardPage() {
                       >
                         {bill.paymentStatus}
                       </Badge>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenBill(bill.id, bill.invoiceNo);
+                        }}
+                        className="h-6.5 px-2 text-[11px] font-bold gap-1 bg-primary/10 text-primary hover:bg-primary/20 border-primary/20 shadow-none"
+                      >
+                        <Eye className="size-3" /> View Bill
+                      </Button>
                     </div>
                   </div>
                 ))}
