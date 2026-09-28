@@ -18,12 +18,15 @@ import {
 } from "@/components/ui";
 import { customerDue, useStore } from "@/lib/store";
 import { inr, todayISO } from "@/lib/format";
-import { PAYMENT_MODES, type Customer, type PaymentMode } from "@/lib/types";
+import { PAYMENT_MODES, type Customer, type PaymentMode, type Sale } from "@/lib/types";
 import {
   generateDueWhatsAppMessage,
   generateConsolidatedDueWhatsAppMessage,
   openWhatsAppChat,
 } from "@/lib/whatsapp";
+import { InvoiceModal } from "@/components/invoice/InvoiceModal";
+import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
+import { Eye, FileText } from "lucide-react";
 
 export const Route = createFileRoute("/customers")({
   head: () => ({
@@ -41,6 +44,24 @@ function CustomersPage() {
   const [targetCustomer, setTargetCustomer] = useState<Customer | null>(null);
   const [ledgerCustomer, setLedgerCustomer] = useState<Customer | null>(null);
   const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+
+  // Customer Bills Modal State
+  const [billsCustomer, setBillsCustomer] = useState<Customer | null>(null);
+  const [billsModalOpen, setBillsModalOpen] = useState(false);
+  const [selectedSaleForInvoice, setSelectedSaleForInvoice] = useState<Sale | null>(null);
+
+  const openCustomerBills = (c: Customer) => {
+    setBillsCustomer(c);
+    setBillsModalOpen(true);
+  };
+
+  const customerSales = useMemo(() => {
+    if (!billsCustomer) return [];
+    return (db.sales || [])
+      .filter((s) => s.customerId === billsCustomer.id && !s.quotation)
+      .slice()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [db.sales, billsCustomer]);
 
   const [form, setForm] = useState({ name: "", phone: "", address: "" });
   const [payAmount, setPayAmount] = useState(0);
@@ -221,13 +242,30 @@ function CustomersPage() {
                   </Td>
                   <Td>{c.address || "—"}</Td>
                   <Td right mono>
-                    {salesCount} bills
+                    <button
+                      type="button"
+                      onClick={() => openCustomerBills(c)}
+                      className="inline-flex items-center gap-1 font-mono font-bold text-primary hover:underline hover:bg-primary/10 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                      title="Click to view all bills of this customer"
+                    >
+                      <FileText className="size-3.5" />
+                      <span>{salesCount} bills</span>
+                    </button>
                   </Td>
                   <Td right mono className={due > 0 ? "font-bold text-destructive" : "text-muted-foreground"}>
                     {inr(due)}
                   </Td>
                   <Td>
                     <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1 font-bold text-primary bg-primary/5 hover:bg-primary/15 border-primary/25"
+                        onClick={() => openCustomerBills(c)}
+                        title="View Customer Bills & Invoices"
+                      >
+                        <FileText className="size-3.5" /> Bills
+                      </Button>
                       {due > 0 && (
                         <>
                           <Button size="sm" variant="success" onClick={() => openPayModal(c)}>
@@ -435,31 +473,48 @@ function CustomersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {entries.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-muted/30">
-                        <td className="py-2 px-3 font-mono">{entry.date}</td>
-                        <td className="py-2 px-3">
-                          <div className="font-semibold">{entry.notes || entry.referenceId || "Transaction"}</div>
-                          {entry.referenceId && (
-                            <div className="text-[10px] text-muted-foreground font-mono">Ref: {entry.referenceId}</div>
-                          )}
-                        </td>
-                        <td className="py-2 px-3">
-                          <Badge tone={entry.type === "PAYMENT" ? "success" : entry.type === "SALE" ? "default" : "info"} className="text-[9.5px]">
-                            {entry.type}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-medium text-destructive">
-                          {entry.debit > 0 ? inr(entry.debit) : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-medium text-emerald-600">
-                          {entry.credit > 0 ? inr(entry.credit) : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono font-bold text-foreground">
-                          {inr(entry.balance)}
-                        </td>
-                      </tr>
-                    ))}
+                    {entries.map((entry) => {
+                      const matchedSale =
+                        entry.type === "SALE"
+                          ? (db.sales || []).find((s) => s.id === entry.referenceId || s.invoiceNo === entry.referenceId)
+                          : null;
+                      return (
+                        <tr key={entry.id} className="hover:bg-muted/30">
+                          <td className="py-2 px-3 font-mono">{entry.date}</td>
+                          <td className="py-2 px-3">
+                            <div className="font-semibold">{entry.notes || entry.referenceId || "Transaction"}</div>
+                            {entry.referenceId && (
+                              <div className="text-[10px] text-muted-foreground font-mono flex items-center gap-2 mt-0.5">
+                                <span>Ref: {entry.referenceId}</span>
+                                {matchedSale && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedSaleForInvoice(matchedSale)}
+                                    className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5 bg-primary/10 px-1.5 py-0.5 rounded cursor-pointer"
+                                  >
+                                    <Eye className="size-2.5" /> View Bill
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-3">
+                            <Badge tone={entry.type === "PAYMENT" ? "success" : entry.type === "SALE" ? "default" : "info"} className="text-[9.5px]">
+                              {entry.type}
+                            </Badge>
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-medium text-destructive">
+                            {entry.debit > 0 ? inr(entry.debit) : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-medium text-emerald-600">
+                            {entry.credit > 0 ? inr(entry.credit) : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold text-foreground">
+                            {inr(entry.balance)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               );
@@ -467,6 +522,137 @@ function CustomersPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Customer Invoices / Bills Modal */}
+      <Modal
+        open={billsModalOpen}
+        onClose={() => setBillsModalOpen(false)}
+        title={`Sales Bills & Invoices — ${billsCustomer?.name}`}
+        wide
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-muted/40 rounded-xl border border-border text-[12px]">
+            <div>
+              <div className="font-bold text-sm text-foreground flex items-center gap-2">
+                <span>{billsCustomer?.name}</span>
+                <span className="text-[11px] font-normal text-muted-foreground">({customerSales.length} total bills)</span>
+              </div>
+              <div className="text-muted-foreground">{billsCustomer?.phone} · {billsCustomer?.address || "No address"}</div>
+            </div>
+            <div className="flex items-center gap-4 text-right">
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Total Billed</div>
+                <div className="text-sm font-bold text-foreground font-mono">
+                  {inr(customerSales.reduce((acc, s) => acc + (s.total || 0), 0))}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Current Due</div>
+                <div className="text-sm font-black text-destructive font-mono">
+                  {inr(customerDue(db, billsCustomer?.id || ""))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-h-[60vh] overflow-y-auto border border-border/80 rounded-xl">
+            {customerSales.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-xs">
+                No sales bills recorded for this customer yet.
+              </div>
+            ) : (
+              <table className="w-full text-xs text-left">
+                <thead className="bg-muted/80 text-muted-foreground font-semibold border-b border-border sticky top-0">
+                  <tr>
+                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">Invoice No</th>
+                    <th className="py-2.5 px-3">Items Sold</th>
+                    <th className="py-2.5 px-3 text-right">Total Amount</th>
+                    <th className="py-2.5 px-3 text-right">Paid</th>
+                    <th className="py-2.5 px-3 text-right">Balance Due</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {customerSales.map((s) => {
+                    const isPaid = s.paid >= s.total - 0.01;
+                    const isPartial = s.paid > 0 && !isPaid;
+                    const due = Math.max(0, s.total - s.paid);
+                    return (
+                      <tr key={s.id} className="hover:bg-muted/30">
+                        <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap font-mono text-[11px]">
+                          {new Date(s.date).toLocaleDateString("en-IN", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-primary whitespace-nowrap">
+                          {s.invoiceNo}
+                          {s.invoiceType && (
+                            <span className="ml-1.5 text-[9.5px] px-1 py-0.2 rounded bg-muted text-muted-foreground font-sans">
+                              {s.invoiceType}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 max-w-[220px] truncate" title={s.items?.map((it) => it.name).join(", ")}>
+                          {s.items?.map((it) => `${it.name} (x${it.qty})`).join(", ")}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                          {inr(s.total)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-emerald-600 font-semibold">
+                          {inr(s.paid)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono">
+                          {due > 0 ? (
+                            <span className="text-destructive font-bold">{inr(due)}</span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <Badge
+                            tone={isPaid ? "success" : isPartial ? "warning" : "danger"}
+                            className="text-[10px]"
+                          >
+                            {isPaid ? "Paid" : isPartial ? "Partial" : "Due"}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => setSelectedSaleForInvoice(s)}
+                            className="h-6.5 px-2 text-xs font-bold gap-1 bg-primary text-primary-foreground shadow-xs"
+                          >
+                            <Eye className="size-3" /> View Bill
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-border">
+            <Button variant="ghost" onClick={() => setBillsModalOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* UNIVERSAL INVOICE MODAL FOR BILL VIEW / PRINT */}
+      {selectedSaleForInvoice && (
+        <InvoiceModal
+          open={Boolean(selectedSaleForInvoice)}
+          onClose={() => setSelectedSaleForInvoice(null)}
+          {...saleToInvoiceProps(selectedSaleForInvoice, db)}
+        />
+      )}
     </div>
   );
 }
