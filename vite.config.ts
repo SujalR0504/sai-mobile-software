@@ -45,3 +45,6 @@ export default defineConfig(({ command, mode }) => {
     ],
   };
 });
+
+// Vite configuration updated for mobile shop ERP dashboard
+

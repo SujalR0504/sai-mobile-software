@@ -108,6 +108,9 @@ interface StoreValue {
     tdsRate?: number;
     tdsAmount?: number;
     roundOff?: number;
+    paymentAccountId?: string;
+    purchaseMode?: string;
+    allowDuplicate?: boolean;
     attachments?: Array<{ fileName: string; fileType: string; fileSize?: number; fileData: string }>;
   }) => Promise<Purchase>;
   recordSaleReturn: (input: {

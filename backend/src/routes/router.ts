@@ -22,9 +22,11 @@ import { paymentAccountRoutes } from "./paymentAccountRoutes";
 import { cloudRoutes } from "./cloudRoutes";
 import { creditNoteRoutes } from "./creditNoteRoutes";
 import { debitNoteRoutes } from "./debitNoteRoutes";
+import { dashboardRoutes } from "./dashboardRoutes";
 import { errorResponse, type RouteContext, type RouteHandler } from "./types";
 
 const routeHandlers: RouteHandler[] = [
+  dashboardRoutes,
   creditNoteRoutes,
   debitNoteRoutes,
   cloudRoutes,

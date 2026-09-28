@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { seedDB } from "./seed";
 import type { DB } from "../../lib/types";
+import { seedMobileProductMaster } from "./mobileProductMaster";
 
 export function initSchema(db: DatabaseSync): void {
   db.exec(`
@@ -1492,6 +1493,7 @@ export function runMigrations(db: DatabaseSync): void {
   addColumnIfNotExists(db, "debit_notes", "updated_at", "TEXT");
 
   seedCategoriesAndHierarchy(db);
+  seedMobileProductMaster(db);
   seedReferenceDealers(db);
   seedPaymentAccounts(db);
   seedSampleOrders(db);

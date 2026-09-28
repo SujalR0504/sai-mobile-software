@@ -115,6 +115,7 @@ const variants = {
   soft: "bg-primary/10 text-primary hover:bg-primary/15 border border-primary/20",
   danger: "bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80",
   success: "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm hover:from-emerald-500 hover:to-teal-500 hover:shadow-md",
+  outline: "border border-border/90 bg-transparent text-foreground hover:bg-muted/40 shadow-xs",
 } as const;
 
 export function Button({

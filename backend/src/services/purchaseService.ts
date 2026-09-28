@@ -5,6 +5,11 @@ import { getPurchases } from "../repositories/repository";
 import { logAudit } from "./auditService";
 import { recordCashbookEntry, recordSupplierLedger } from "./ledgerService";
 import { recordStockMovement } from "./stockMovementService";
+import {
+  getDefaultCashAccount,
+  getPaymentAccountById,
+  recordAccountTransaction,
+} from "./paymentAccountService";
 
 export interface PurchaseAttachmentInput {
   fileName: string;
@@ -50,6 +55,9 @@ export interface CreatePurchaseInput {
   roundOff?: number;
   paid?: number;
   mode?: PaymentMode;
+  paymentAccountId?: string;
+  purchaseMode?: string;
+  allowDuplicate?: boolean;
   attachments?: PurchaseAttachmentInput[];
   user?: string;
 }
@@ -269,6 +277,14 @@ export function recordPurchase(db: DatabaseSync, input: CreatePurchaseInput): Pu
   const initialStatus = dueAmount <= 0.01 ? "PAID" : paid > 0 ? "PARTIALLY PAID" : "UNPAID";
 
   const invoiceNo = input.invoiceNo?.trim() || generatePurchaseInvoiceNo(db);
+  // Check duplicate invoice for this dealer
+  const existingInv = db.prepare(
+    "SELECT id, invoice_no FROM purchases WHERE supplier_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?))"
+  ).get(dealerId, invoiceNo) as any;
+  if (existingInv && !input.allowDuplicate) {
+    throw new Error(`Purchase invoice already exists for this dealer.`);
+  }
+
   const purchaseId = uid("pur");
   const date = input.date || todayISO();
 
@@ -460,10 +476,23 @@ export function recordPurchase(db: DatabaseSync, input: CreatePurchaseInput): Pu
     }
 
     // Handle Payment if paid > 0
+    let resolvedAccountId = input.paymentAccountId;
     if (paid > 0) {
+      if (!resolvedAccountId) {
+        if (mode === "Cash") {
+          resolvedAccountId = getDefaultCashAccount(db).id;
+        } else if (mode === "UPI") {
+          const upiAcct = db.prepare("SELECT id FROM payment_accounts WHERE account_type = 'UPI' AND status = 'ACTIVE' ORDER BY is_default DESC LIMIT 1").get() as any;
+          if (upiAcct) resolvedAccountId = upiAcct.id;
+        } else if (mode === "Bank") {
+          const bankAcct = db.prepare("SELECT id FROM payment_accounts WHERE account_type = 'BANK' AND status = 'ACTIVE' ORDER BY is_default DESC LIMIT 1").get() as any;
+          if (bankAcct) resolvedAccountId = bankAcct.id;
+        }
+      }
+
       const insertPaymentStmt = db.prepare(`
-        INSERT INTO payments (id, business_id, branch_id, date, party, party_id, ref_id, amount, mode, note)
-        VALUES (?, 'biz_default', 'branch_01', ?, 'supplier', ?, ?, ?, ?, ?)
+        INSERT INTO payments (id, business_id, branch_id, date, party, party_id, ref_id, amount, mode, note, payment_account_id)
+        VALUES (?, 'biz_default', 'branch_01', ?, 'supplier', ?, ?, ?, ?, ?, ?)
       `);
       insertPaymentStmt.run(
         uid("pay"),
@@ -472,8 +501,24 @@ export function recordPurchase(db: DatabaseSync, input: CreatePurchaseInput): Pu
         purchaseId,
         paid,
         mode,
-        `Payment for purchase invoice ${invoiceNo}`
+        `Payment for purchase invoice ${invoiceNo}`,
+        resolvedAccountId || null
       );
+
+      if (resolvedAccountId) {
+        recordAccountTransaction(db, {
+          accountId: resolvedAccountId,
+          transactionType: "PURCHASE_PAYMENT",
+          referenceType: "PURCHASE",
+          referenceId: purchaseId,
+          amount: paid,
+          isCredit: false,
+          paymentMethod: mode,
+          date,
+          description: `Purchase payment for invoice ${invoiceNo} to ${dealer.name}`,
+          createdBy: input.user || "Purchaser",
+        });
+      }
 
       if (mode === "Cash") {
         recordCashbookEntry(db, "PURCHASE_PAYMENT_CASH", purchaseId, "Purchases", 0, paid, `Cash payment to dealer for ${invoiceNo}`);
@@ -485,7 +530,7 @@ export function recordPurchase(db: DatabaseSync, input: CreatePurchaseInput): Pu
     recordSupplierLedger(db, dealerId, "PURCHASE", purchaseId, 0, total, `Purchase Invoice ${invoiceNo} (${purchaseType})`);
     // 2. Debit entry: Paid amount reduces payable
     if (paid > 0) {
-      recordSupplierLedger(db, dealerId, "PAYMENT", purchaseId, paid, 0, `Payment for invoice ${invoiceNo}`);
+      recordSupplierLedger(db, dealerId, "PAYMENT", purchaseId, paid, 0, `Payment for invoice ${invoiceNo}`, resolvedAccountId, mode);
     }
 
     // Log Audit
@@ -547,6 +592,8 @@ export function recordPurchase(db: DatabaseSync, input: CreatePurchaseInput): Pu
       tdsRate,
       tdsAmount,
       roundOff,
+      paymentAccountId: resolvedAccountId,
+      purchaseMode: input.purchaseMode,
       attachments,
     };
   } catch (error) {
@@ -568,6 +615,7 @@ export function recordPurchasePayment(
         purchaseId: string;
         amount: number;
         mode: string;
+        paymentAccountId?: string;
         date?: string;
         referenceNo?: string;
         chequeNo?: string;
@@ -579,6 +627,7 @@ export function recordPurchasePayment(
   maybeInput?: {
     amount: number;
     mode: string;
+    paymentAccountId?: string;
     date?: string;
     referenceNo?: string;
     chequeNo?: string;
@@ -592,6 +641,7 @@ export function recordPurchasePayment(
     purchaseId: string;
     amount: number;
     mode: string;
+    paymentAccountId?: string;
     date?: string;
     referenceNo?: string;
     chequeNo?: string;
@@ -606,6 +656,7 @@ export function recordPurchasePayment(
       purchaseId: purchaseIdOrInput,
       amount: maybeInput?.amount || 0,
       mode: maybeInput?.mode || "Cash",
+      paymentAccountId: maybeInput?.paymentAccountId,
       date: maybeInput?.date,
       referenceNo: maybeInput?.referenceNo,
       chequeNo: maybeInput?.chequeNo,
@@ -649,15 +700,28 @@ export function recordPurchasePayment(
   const date = input.date || todayISO();
   const now = new Date().toISOString();
 
+  let resolvedAccountId = input.paymentAccountId;
+  if (!resolvedAccountId) {
+    if (input.mode === "Cash") {
+      resolvedAccountId = getDefaultCashAccount(db).id;
+    } else if (input.mode === "UPI") {
+      const upiAcct = db.prepare("SELECT id FROM payment_accounts WHERE account_type = 'UPI' AND status = 'ACTIVE' ORDER BY is_default DESC LIMIT 1").get() as any;
+      if (upiAcct) resolvedAccountId = upiAcct.id;
+    } else if (input.mode === "Bank") {
+      const bankAcct = db.prepare("SELECT id FROM payment_accounts WHERE account_type = 'BANK' AND status = 'ACTIVE' ORDER BY is_default DESC LIMIT 1").get() as any;
+      if (bankAcct) resolvedAccountId = bankAcct.id;
+    }
+  }
+
   db.exec("BEGIN TRANSACTION;");
   try {
     // 1. Insert into payments table
     const insertPaymentStmt = db.prepare(`
       INSERT INTO payments (
         id, business_id, branch_id, date, party, party_id, ref_id,
-        amount, mode, note, reference_no, cheque_no, bank_name, user_id, user_name, created_at
+        amount, mode, note, reference_no, cheque_no, bank_name, user_id, user_name, created_at, payment_account_id
       )
-      VALUES (?, 'biz_default', 'branch_01', ?, 'supplier', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, 'biz_default', 'branch_01', ?, 'supplier', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertPaymentStmt.run(
@@ -673,7 +737,8 @@ export function recordPurchasePayment(
       input.bankName ?? null,
       input.user ?? "system",
       input.userName ?? input.user ?? "System",
-      now
+      now,
+      resolvedAccountId ?? null
     );
 
     // 2. Recalculate total paid & due
@@ -687,7 +752,23 @@ export function recordPurchasePayment(
       WHERE id = ?
     `).run(newTotalPaid, newDueAmount, newStatus, input.purchaseId);
 
-    // 3. Record in Dealer Ledger
+    // 3. Record in Account Transaction if account linked
+    if (resolvedAccountId) {
+      recordAccountTransaction(db, {
+        accountId: resolvedAccountId,
+        transactionType: "PURCHASE_PAYMENT",
+        referenceType: "PURCHASE",
+        referenceId: input.purchaseId,
+        amount: input.amount,
+        isCredit: false,
+        paymentMethod: input.mode,
+        date,
+        description: `Payment for purchase invoice ${purchase.invoice_no} to dealer`,
+        createdBy: input.user || "User",
+      });
+    }
+
+    // 4. Record in Dealer Ledger
     recordSupplierLedger(
       db,
       purchase.supplier_id,
@@ -695,7 +776,10 @@ export function recordPurchasePayment(
       input.purchaseId,
       input.amount,
       0,
-      `Payment for invoice ${purchase.invoice_no} (${input.mode}${input.referenceNo ? ` - Ref: ${input.referenceNo}` : ""})`
+      `Payment for invoice ${purchase.invoice_no} (${input.mode}${input.referenceNo ? ` - Ref: ${input.referenceNo}` : ""})`,
+      resolvedAccountId,
+      input.mode,
+      input.referenceNo
     );
 
     // 4. Record Cashbook if Cash
@@ -845,6 +929,21 @@ export function deletePurchasePayment(
       payment.amount,
       `Reversal of payment for invoice ${purchase.invoice_no}`
     );
+
+    // Reverse Payment Account if account was linked
+    if (payment.payment_account_id) {
+      recordAccountTransaction(db, {
+        accountId: payment.payment_account_id,
+        transactionType: "ADJUSTMENT",
+        referenceType: "PURCHASE_PAYMENT_REVERSAL",
+        referenceId: paymentId,
+        amount: payment.amount,
+        isCredit: true,
+        paymentMethod: payment.mode,
+        description: `Reversal of payment for invoice ${purchase.invoice_no}`,
+        createdBy: user || "System",
+      });
+    }
 
     // Audit log
     logAudit(db, {

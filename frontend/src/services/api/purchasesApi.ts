@@ -4,6 +4,10 @@ import { apiClient } from "./apiClient";
 export const purchasesApi = {
   getPurchases: () => apiClient.get<Purchase[]>("/api/purchases"),
   getPurchase: (id: string) => apiClient.get<Purchase>(`/api/purchases/${id}`),
+  checkDuplicate: (dealerId: string, invoiceNo: string) =>
+    apiClient.get<{ exists: boolean; purchase?: Purchase }>(
+      `/api/purchases/check-duplicate?dealerId=${encodeURIComponent(dealerId)}&invoiceNo=${encodeURIComponent(invoiceNo)}`
+    ),
   recordPurchase: (input: any) => apiClient.post<Purchase>("/api/purchases", input),
   extractInvoice: (payload: any) => apiClient.post<any>("/api/purchases/extract-invoice", payload),
 

@@ -15,7 +15,20 @@ import {
 } from "../services/purchaseService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
-export async function purchaseRoutes({ request, pathname, method, db }: RouteContext): Promise<Response | null> {
+export async function purchaseRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // Check Duplicate Invoice
+  if (pathname === "/api/purchases/check-duplicate" && method === "GET") {
+    const dealerId = url.searchParams.get("dealerId") || url.searchParams.get("supplierId");
+    const invoiceNo = url.searchParams.get("invoiceNo");
+    if (!dealerId || !invoiceNo) {
+      return jsonResponse({ exists: false });
+    }
+    const existing = db.prepare(
+      "SELECT id, invoice_no, date, total, status FROM purchases WHERE supplier_id = ? AND LOWER(TRIM(invoice_no)) = LOWER(TRIM(?))"
+    ).get(dealerId, invoiceNo.trim()) as any;
+    return jsonResponse({ exists: Boolean(existing), purchase: existing || null });
+  }
+
   // Invoice Extraction
   if (pathname === "/api/purchases/extract-invoice" && method === "POST") {
     const body = await request.json();
@@ -75,6 +88,7 @@ export async function purchaseRoutes({ request, pathname, method, db }: RouteCon
         amount: Number(body.amount),
         date: body.date,
         mode: body.mode,
+        paymentAccountId: body.paymentAccountId || body.accountId,
         referenceNo: body.referenceNo,
         chequeNo: body.chequeNo,
         bankName: body.bankName,

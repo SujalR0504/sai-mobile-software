@@ -47,8 +47,8 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
   const date = todayISO();
   const amount = input.items.reduce((sum, item) => sum + item.price * item.qty, 0);
   const condition = input.condition || "GOOD";
-  // Per spec: Returned mobile must not automatically become saleable!
-  const unitStatus = condition === "GOOD" ? "RETURNED" : condition === "DAMAGED" ? "DAMAGED" : "UNDER_INSPECTION";
+  // Requirement 19: Sales Return -> status = IN_STOCK
+  const unitStatus = condition === "GOOD" ? "IN_STOCK" : condition === "DAMAGED" ? "DAMAGED" : "UNDER_INSPECTION";
 
   db.exec("BEGIN TRANSACTION;");
   try {
@@ -254,7 +254,7 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
 
     const updateUnitStmt = db.prepare(`
       UPDATE units
-      SET status = 'PURCHASE_RETURNED'
+      SET status = 'RETURNED_TO_DEALER'
       WHERE id = ?
     `);
 
