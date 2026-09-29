@@ -20,6 +20,7 @@ import { stockOf, useStore } from "@/lib/store";
 import { inr } from "@/lib/format";
 import { CATEGORIES, type Category, type Product } from "@/lib/types";
 import { QuickProductModal } from "@/components/QuickProductModal";
+import { ExcelProductImportModal } from "@/components/products/ExcelProductImportModal";
 
 export const Route = createFileRoute("/products")({
   head: () => ({
@@ -29,7 +30,7 @@ export const Route = createFileRoute("/products")({
 });
 
 export function ProductsPage() {
-  const { db, addProduct, updateProduct, deleteProduct, addUnits } = useStore();
+  const { db, addProduct, updateProduct, deleteProduct, addUnits, refreshFromBackend } = useStore();
   const [activeTab, setActiveTab] = useState<"catalog" | "hierarchy">("catalog");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("All");
@@ -53,6 +54,7 @@ export function ProductsPage() {
   const [modelSearch, setModelSearch] = useState("");
 
   const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [productError, setProductError] = useState("");
 
@@ -907,7 +909,10 @@ export function ProductsPage() {
               </button>
             </div>
             {activeTab === "catalog" && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={() => setImportModalOpen(true)} className="shadow-xs gap-1.5 font-bold" variant="outline">
+                  📥 Import Excel / CSV
+                </Button>
                 <Button onClick={() => setQuickProductModalOpen(true)} className="shadow-md" variant="soft">
                   ⚡ + Quick Add Product
                 </Button>
@@ -915,6 +920,11 @@ export function ProductsPage() {
                   + Add Product
                 </Button>
               </div>
+            )}
+            {activeTab === "hierarchy" && (
+              <Button onClick={() => setImportModalOpen(true)} className="shadow-xs gap-1.5 font-bold" variant="outline">
+                📥 Bulk Import (Excel)
+              </Button>
             )}
           </div>
         }
@@ -1532,7 +1542,7 @@ export function ProductsPage() {
                   Parent selection clears and validates children
                 </span>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
                 <Field label="1. Category">
                   <Select
                     value={selectedCatId}
@@ -2090,6 +2100,16 @@ export function ProductsPage() {
           </div>
         </form>
       </Modal>
+
+      {/* EXCEL / CSV BULK IMPORT MODAL */}
+      <ExcelProductImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          loadHierarchy();
+          refreshFromBackend();
+        }}
+      />
     </div>
   );
 }

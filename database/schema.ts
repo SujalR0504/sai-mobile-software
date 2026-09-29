@@ -2014,8 +2014,8 @@ export function wipeAllData(db: DatabaseSync): void {
     DELETE FROM expenses;
     DELETE FROM payments;
     DELETE FROM units;
-    UPDATE products SET qty = 0;
-    UPDATE product_variants SET qty = 0;
+    DELETE FROM product_variants;
+    DELETE FROM products;
     DELETE FROM customers WHERE id != 'c0';
     DELETE FROM suppliers WHERE id LIKE 'sup_test_%' OR id LIKE 'sup_nqcf%' OR id LIKE 'dealer_pos%';
     DELETE FROM payment_account_transactions;

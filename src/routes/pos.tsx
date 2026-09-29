@@ -20,12 +20,14 @@ import { AdminPinModal } from "@/components/AdminPinModal";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
 import { EMICalculator } from "@/components/EMICalculator";
-import { Calculator, Plus, Trash2, Zap, Eye, FileText } from "lucide-react";
+import { Calculator, Plus, Trash2, Zap, Eye, FileText, TrendingUp, Sparkles } from "lucide-react";
 import { PosCustomerCard } from "@/components/pos/PosCustomerCard";
 import { QuickAddCustomerModal } from "@/components/pos/QuickAddCustomerModal";
 import { PosSuccessModal } from "@/components/pos/PosSuccessModal";
 import { NewSaleCustomerModal } from "@/components/pos/NewSaleCustomerModal";
 import { QuickCollectDueModal } from "@/components/pos/QuickCollectDueModal";
+import { PriceAdjustModal } from "@/components/pos/PriceAdjustModal";
+import { CustomAmountModal } from "@/components/pos/CustomAmountModal";
 
 export const Route = createFileRoute("/pos")({
   head: () => ({
@@ -98,6 +100,10 @@ function POS() {
   });
   const [changeCustomerModalOpen, setChangeCustomerModalOpen] = useState(false);
   const [collectDueOpen, setCollectDueOpen] = useState(false);
+  // Adjust Price modal state for cart items
+  const [adjustPriceItemIndex, setAdjustPriceItemIndex] = useState<number | null>(null);
+  // Custom Amount / Extra Charge modal state
+  const [customAmountModalOpen, setCustomAmountModalOpen] = useState(false);
 
   // Customer outstanding balance due
   const customerDue = useMemo(() => {
@@ -1173,8 +1179,19 @@ function POS() {
 
             {/* 2. CART LINE ITEMS TABLE */}
             <div className="space-y-1.5 pt-1">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Bill Items ({items.length})
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Bill Items ({items.length})
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomAmountModalOpen(true)}
+                  className="text-[10.5px] font-bold text-primary hover:text-primary/80 flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/15 px-2 py-0.5 rounded-lg border border-primary/20 transition-all shadow-2xs"
+                  title="Add extra charge, accessory, service charge or custom amount"
+                >
+                  <Plus className="size-3" />
+                  <span>+ Custom Amount / Extra</span>
+                </button>
               </div>
 
               {items.length === 0 ? (
@@ -1230,29 +1247,94 @@ function POS() {
                           </div>
 
                           <div className="text-right shrink-0">
-                            <span className="font-bold font-mono text-[13px] text-foreground">{inr(i.price * i.qty)}</span>
-                            <div className="flex items-center justify-end gap-1 mt-0.5">
-                              <span className="text-[10px] text-muted-foreground">Rate:</span>
-                              <input
-                                type="number"
-                                value={i.price}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value) || 0;
-                                  requestPriceOverride(idx, val);
-                                }}
-                                className="h-5.5 w-16 rounded border border-border bg-background px-1 text-right font-mono text-[10.5px] font-semibold"
-                              />
-                            </div>
-                            {i.price < i.costPrice && (
-                              <Badge tone="danger" className="text-[8.5px] py-0 px-1 mt-0.5">
-                                Below Cost
-                              </Badge>
-                            )}
+                            <span className="font-bold font-mono text-[13px] text-foreground block">
+                              {inr(i.price * i.qty)}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {i.qty > 1 ? `(${inr(i.price)} × ${i.qty})` : "Total"}
+                            </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between text-[10.5px] text-muted-foreground border-t border-border/40 pt-1">
-                          <span>{i.gst > 0 && invoiceType === "GST" ? `GST ${i.gst}%` : "0% GST"}</span>
+                        {/* Rate / Selling Price Controls & Badges */}
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/40 text-[11px]">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-bold text-muted-foreground">Rate:</span>
+                            <input
+                              type="number"
+                              defaultValue={i.price}
+                              key={`${idx}-${i.price}`}
+                              onBlur={(e) => {
+                                const val = Number(e.target.value);
+                                if (!isNaN(val) && val >= 0 && val !== i.price) {
+                                  requestPriceOverride(idx, val);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  const val = Number((e.target as HTMLInputElement).value);
+                                  if (!isNaN(val) && val >= 0 && val !== i.price) {
+                                    requestPriceOverride(idx, val);
+                                  }
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }}
+                              className="h-6 w-20 rounded border border-border bg-background px-1.5 text-right font-mono text-[11px] font-bold text-foreground focus:border-primary focus:outline-none"
+                              title="Click to edit selling price. Press Enter or click outside to apply."
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setAdjustPriceItemIndex(idx)}
+                              className="h-6 px-1.5 rounded-md bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                              title="Adjust or increase selling price"
+                            >
+                              <TrendingUp className="size-2.5" />
+                              <span>बढ़ाएं</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => patchItem(idx, { price: i.price + 100 })}
+                              className="h-5 px-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300/60 text-[9.5px] font-mono font-bold cursor-pointer transition-all active:scale-95"
+                              title="Add ₹100 to rate"
+                            >
+                              +100
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => patchItem(idx, { price: i.price + 500 })}
+                              className="h-5 px-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300/60 text-[9.5px] font-mono font-bold cursor-pointer transition-all active:scale-95"
+                              title="Add ₹500 to rate"
+                            >
+                              +500
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => patchItem(idx, { price: i.price + 1000 })}
+                              className="h-5 px-1.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300/60 text-[9.5px] font-mono font-bold cursor-pointer transition-all active:scale-95"
+                              title="Add ₹1,000 to rate"
+                            >
+                              +1k
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10.5px] text-muted-foreground pt-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{i.gst > 0 && invoiceType === "GST" ? `GST ${i.gst}%` : "0% GST"}</span>
+                            {i.price < i.costPrice && (
+                              <Badge tone="danger" className="text-[8.5px] py-0 px-1">
+                                Below Cost
+                              </Badge>
+                            )}
+                            {product && i.price > product.sellingPrice && (
+                              <Badge tone="success" className="text-[8.5px] py-0 px-1">
+                                +{inr(i.price - product.sellingPrice)} Extra Profit
+                              </Badge>
+                            )}
+                          </div>
                           <button
                             type="button"
                             onClick={() => removeItem(idx)}
@@ -1404,33 +1486,53 @@ function POS() {
 
               {/* Partial Payment: Paid Amount & Balance Due Inputs */}
               {!splitOpen && mode !== "Credit" && mode !== "EMI" && (
-                <div className="grid grid-cols-2 gap-2 bg-muted/20 p-2 rounded-xl border border-border/60">
-                  <Field label="Paid Amount (₹)">
-                    <Input
-                      type="number"
-                      step="1"
-                      min="0"
-                      max={total}
-                      value={customPaidAmount !== null ? customPaidAmount : total}
-                      onChange={(e) => {
-                        const val = e.target.value === "" ? null : Number(e.target.value);
-                        setCustomPaidAmount(val);
-                      }}
-                      className="h-8.5 font-mono font-bold text-[13px] text-emerald-700"
-                    />
-                  </Field>
-                  <Field label="Due Balance (₹)">
-                    <div
-                      className={`h-8.5 rounded-lg border px-2.5 flex items-center justify-between text-[12px] font-mono font-bold ${
-                        dueAmount > 0
-                          ? "border-destructive/40 bg-destructive/10 text-destructive"
-                          : "border-border/60 bg-white text-muted-foreground"
-                      }`}
-                    >
-                      <span>{dueAmount > 0 ? "Due:" : "Fully Paid"}</span>
-                      <span>{inr(dueAmount)}</span>
+                <div className="space-y-1.5 bg-muted/20 p-2.5 rounded-xl border border-border/60">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Paid Amount (₹)">
+                      <Input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={customPaidAmount !== null ? customPaidAmount : total}
+                        onChange={(e) => {
+                          const val = e.target.value === "" ? null : Number(e.target.value);
+                          setCustomPaidAmount(val);
+                        }}
+                        className="h-8.5 font-mono font-bold text-[13px] text-emerald-700"
+                        title="Enter amount paid by customer (supports full, partial, or higher with change return)"
+                      />
+                    </Field>
+                    <Field label={effectivePaidAmount > total ? "Change to Return" : "Due Balance (₹)"}>
+                      <div
+                        className={`h-8.5 rounded-lg border px-2.5 flex items-center justify-between text-[12px] font-mono font-bold ${
+                          effectivePaidAmount > total
+                            ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-700"
+                            : dueAmount > 0
+                            ? "border-destructive/40 bg-destructive/10 text-destructive"
+                            : "border-border/60 bg-white text-muted-foreground"
+                        }`}
+                      >
+                        <span>
+                          {effectivePaidAmount > total
+                            ? "Change:"
+                            : dueAmount > 0
+                            ? "Due:"
+                            : "Fully Paid"}
+                        </span>
+                        <span>
+                          {effectivePaidAmount > total
+                            ? inr(effectivePaidAmount - total)
+                            : inr(dueAmount)}
+                        </span>
+                      </div>
+                    </Field>
+                  </div>
+                  {effectivePaidAmount > total && (
+                    <div className="text-[11px] font-semibold text-emerald-700 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg flex items-center justify-between">
+                      <span>💵 Return to Customer (वापसी राशि):</span>
+                      <span className="font-mono font-extrabold text-[12px]">{inr(effectivePaidAmount - total)}</span>
                     </div>
-                  </Field>
+                  )}
                 </div>
               )}
 
@@ -1827,6 +1929,44 @@ function POS() {
             pendingAction();
             setPendingAction(null);
           }
+        }}
+      />
+
+      {/* PRICE ADJUST MODAL */}
+      <PriceAdjustModal
+        open={adjustPriceItemIndex !== null}
+        onClose={() => setAdjustPriceItemIndex(null)}
+        item={adjustPriceItemIndex !== null ? items[adjustPriceItemIndex] || null : null}
+        product={
+          adjustPriceItemIndex !== null && items[adjustPriceItemIndex]
+            ? db.products.find((p) => p.id === items[adjustPriceItemIndex]?.productId)
+            : undefined
+        }
+        onSave={(newPrice) => {
+          if (adjustPriceItemIndex !== null) {
+            requestPriceOverride(adjustPriceItemIndex, newPrice);
+          }
+        }}
+      />
+
+      {/* CUSTOM AMOUNT / EXTRA CHARGE MODAL */}
+      <CustomAmountModal
+        open={customAmountModalOpen}
+        onClose={() => setCustomAmountModalOpen(false)}
+        invoiceType={invoiceType}
+        onAdd={({ name, amount, gst }) => {
+          setItems((c) => [
+            ...c,
+            {
+              productId: `custom_${Date.now()}`,
+              name,
+              qty: 1,
+              price: amount,
+              gst,
+              costPrice: 0,
+              warrantyMonths: 0,
+            },
+          ]);
         }}
       />
 

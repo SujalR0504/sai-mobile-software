@@ -1,9 +1,16 @@
 import { getProducts } from "../../db/repository";
 import { checkEmployeePermission } from "../../services/permissionService";
 import { addProduct, addUnits, deleteProduct, updateProduct } from "../../services/stockService";
+import { bulkImportHierarchyAndProducts } from "../../services/categoryService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function productRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // Bulk import products and category/subcategory/brand/model hierarchy
+  if (pathname === "/api/products/bulk-import" && method === "POST") {
+    const body = await request.json();
+    const rows = Array.isArray(body) ? body : (body.rows || []);
+    return jsonResponse(bulkImportHierarchyAndProducts(db, rows));
+  }
   // Barcode & Product Quick Lookup
   if (pathname === "/api/barcode/lookup" && method === "GET") {
     const code = url.searchParams.get("code")?.trim() || "";

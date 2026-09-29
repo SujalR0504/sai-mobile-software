@@ -1,9 +1,23 @@
 import { getProducts } from "../repositories/repository";
 import { checkEmployeePermission } from "../services/permissionService";
 import { addProduct, addUnits, deleteProduct, updateProduct } from "../services/stockService";
+import { bulkImportHierarchyAndProducts } from "../services/categoryService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function productRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // Bulk import products and category/subcategory/brand/model hierarchy
+  if (pathname === "/api/products/bulk-import" && method === "POST") {
+    try {
+      const body = await request.json();
+      const rows = Array.isArray(body) ? body : (body.rows || []);
+      const businessId = body.businessId || "biz_default";
+      const result = bulkImportHierarchyAndProducts(db, rows, businessId);
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(err.message || "Bulk import failed", 400);
+    }
+  }
+
   // Barcode & Product Quick Lookup
   if (pathname === "/api/barcode/lookup" && method === "GET") {
     const code = url.searchParams.get("code")?.trim() || "";

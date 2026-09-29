@@ -15,6 +15,8 @@ export interface RecordSaleReturnInput {
   condition?: "GOOD" | "DAMAGED" | "UNDER_INSPECTION";
   mode: "Refund" | "Credit Note";
   generateCreditNote?: boolean;
+  destination?: "INVENTORY" | "DEALER";
+  dealerId?: string;
   user?: string;
 }
 
@@ -45,10 +47,16 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
 
   const returnId = uid("ret");
   const date = todayISO();
-  const amount = input.items.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const condition = input.condition || "GOOD";
-  // Requirement 19: Sales Return -> status = IN_STOCK
-  const unitStatus = condition === "GOOD" ? "IN_STOCK" : condition === "DAMAGED" ? "DAMAGED" : "UNDER_INSPECTION";
+  const isDealerReturn = input.destination === "DEALER";
+  const condition = input.condition || (isDealerReturn ? "DAMAGED" : "GOOD");
+  // Sales Return -> status = IN_STOCK (if restocking to inventory) or PURCHASE_RETURNED (if returning to dealer)
+  const unitStatus = isDealerReturn
+    ? "PURCHASE_RETURNED"
+    : condition === "GOOD"
+    ? "IN_STOCK"
+    : condition === "DAMAGED"
+    ? "DAMAGED"
+    : "UNDER_INSPECTION";
 
   db.exec("BEGIN TRANSACTION;");
   try {
@@ -94,7 +102,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
 
       if (item.unitId) {
         updateUnitStmt.run(unitStatus, item.unitId);
-      } else if (condition === "GOOD") {
+      } else if (!isDealerReturn && condition === "GOOD") {
         db.prepare("UPDATE products SET qty = qty + ? WHERE id = ? AND tracked = 0").run(item.qty, item.productId);
       }
 
@@ -202,6 +210,21 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
       reason: input.reason,
     });
 
+    if (isDealerReturn && input.dealerId) {
+      recordSupplierLedger(
+        db,
+        input.dealerId,
+        "PURCHASE_RETURN",
+        returnId,
+        amount,
+        0,
+        `Sales Return #${sale.invoice_no} forwarded to Dealer: ${input.reason}`,
+        undefined,
+        "DEALER_RETURN",
+        `DR-${sale.invoice_no}`
+      );
+    }
+
     db.exec("COMMIT;");
 
     return {
@@ -216,6 +239,8 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
       reason: input.reason,
       condition,
       mode: input.mode,
+      destination: input.destination || "INVENTORY",
+      dealerId: input.dealerId,
     };
   } catch (error) {
     db.exec("ROLLBACK;");

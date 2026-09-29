@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Badge,
   Button,
@@ -20,6 +20,7 @@ import { inr } from "@/lib/format";
 import type { LineItem, ReturnDoc } from "@/lib/types";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { returnDocToInvoiceProps } from "@/components/invoice/invoiceAdapters";
+import { Package, Truck, Info } from "lucide-react";
 
 export const Route = createFileRoute("/returns")({
   head: () => ({
@@ -37,6 +38,8 @@ function ReturnsPage() {
   const [returnReason, setReturnReason] = useState("");
   const [purchaseReturnReason, setPurchaseReturnReason] = useState("");
   const [returnMode, setReturnMode] = useState<"Refund" | "Credit Note">("Credit Note");
+  const [returnDestination, setReturnDestination] = useState<"INVENTORY" | "DEALER">("INVENTORY");
+  const [selectedDealerId, setSelectedDealerId] = useState("");
   const [selectedItems, setSelectedItems] = useState<LineItem[]>([]);
   const [purchaseSelectedItems, setPurchaseSelectedItems] = useState<LineItem[]>([]);
   const [selectedReturnInvoice, setSelectedReturnInvoice] = useState<ReturnDoc | null>(null);
@@ -54,6 +57,27 @@ function ReturnsPage() {
     [db.purchases, selectedPurchaseId],
   );
 
+  // Auto-detect supplier from original purchase of returned units
+  const autoDetectedSupplierId = useMemo(() => {
+    if (!selectedSale) return db.suppliers[0]?.id || "";
+    for (const item of selectedSale.items) {
+      if (item.unitId) {
+        const u = db.units.find((x) => x.id === item.unitId);
+        if (u?.purchaseId) {
+          const pur = db.purchases.find((p) => p.id === u.purchaseId);
+          if (pur?.supplierId) return pur.supplierId;
+        }
+      }
+    }
+    return db.suppliers[0]?.id || "";
+  }, [selectedSale, db.units, db.purchases, db.suppliers]);
+
+  useEffect(() => {
+    if (autoDetectedSupplierId) {
+      setSelectedDealerId(autoDetectedSupplierId);
+    }
+  }, [autoDetectedSupplierId]);
+
   const handleOpenSaleReturn = () => {
     if (db.sales.length > 0) {
       const first = db.sales[0]!;
@@ -62,6 +86,7 @@ function ReturnsPage() {
     }
     setReturnReason("Customer changed mind / defective");
     setReturnMode("Credit Note");
+    setReturnDestination("INVENTORY");
     setSaleReturnModal(true);
   };
 
@@ -94,12 +119,18 @@ function ReturnsPage() {
   const handleConfirmSaleReturn = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSaleId || selectedItems.length === 0) return;
+    if (returnDestination === "DEALER" && !selectedDealerId) {
+      alert("Please select a Dealer / Supplier to return the item to.");
+      return;
+    }
 
     recordSaleReturn({
       saleId: selectedSaleId,
       items: selectedItems,
       reason: returnReason,
       mode: returnMode,
+      destination: returnDestination,
+      dealerId: returnDestination === "DEALER" ? selectedDealerId : undefined,
     });
 
     setSaleReturnModal(false);
@@ -153,9 +184,24 @@ function ReturnsPage() {
               return (
                 <Row key={r.id}>
                   <Td>
-                    <Badge tone={r.type === "sale" ? "warning" : "info"}>
-                      {r.type === "sale" ? "Customer Return" : "Dealer Return"}
-                    </Badge>
+                    <div className="space-y-1">
+                      <Badge tone={r.type === "sale" ? "warning" : "info"}>
+                        {r.type === "sale" ? "Customer Return" : "Dealer Return"}
+                      </Badge>
+                      {r.destination && (
+                        <div className="text-[10px] font-semibold">
+                          {r.destination === "DEALER" ? (
+                            <span className="text-indigo-600 flex items-center gap-0.5">
+                              <Truck className="size-2.5 inline" /> To Dealer: {supplierMap.get(r.dealerId || "")?.name || "Dealer"}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-600 flex items-center gap-0.5">
+                              <Package className="size-2.5 inline" /> Restocked
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </Td>
                   <Td>{r.date}</Td>
                   <Td mono className="font-semibold">{r.refNo}</Td>
@@ -235,23 +281,132 @@ function ReturnsPage() {
             />
           </Field>
 
-          {selectedSale && (
-            <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/20">
-              <div className="text-[12px] font-semibold">Items in Bill {selectedSale.invoiceNo}</div>
-              <div className="text-[11px] text-muted-foreground">
-                All items below will be returned to store inventory.
+          {/* 2 OPTIONS: RESTOCK TO INVENTORY vs RETURN TO DEALER */}
+          <div className="space-y-2 pt-1">
+            <label className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+              Return Destination (वस्तु कहाँ जाएगी?) *
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Option 1: Wapas Inventory me add ho jaye */}
+              <div
+                onClick={() => setReturnDestination("INVENTORY")}
+                className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  returnDestination === "INVENTORY"
+                    ? "border-emerald-500 bg-emerald-50/50 ring-2 ring-emerald-500/20 shadow-xs"
+                    : "border-border/80 bg-muted/10 hover:bg-muted/20"
+                }`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="radio"
+                    id="dest_inventory"
+                    name="returnDestination"
+                    checked={returnDestination === "INVENTORY"}
+                    onChange={() => setReturnDestination("INVENTORY")}
+                    className="mt-0.5 accent-emerald-600 cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="dest_inventory" className="font-bold text-[13px] text-foreground flex items-center gap-1.5 cursor-pointer">
+                      <Package className="size-4 text-emerald-600" />
+                      <span>Restock to Inventory</span>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                      आइटम दुकान की <strong>उपलब्ध इन्वेंटरी</strong> में वापस जुड़ जाएगा और POS में तुरंत बिक्री हेतु उपलब्ध रहेगा।
+                    </p>
+                    <Badge tone="success" className="text-[9px] py-0 px-1.5 mt-2">
+                      +1 Qty / Available in POS
+                    </Badge>
+                  </div>
+                </div>
               </div>
-              <div className="space-y-1.5">
+
+              {/* Option 2: Dealer ko return karne ka option */}
+              <div
+                onClick={() => setReturnDestination("DEALER")}
+                className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  returnDestination === "DEALER"
+                    ? "border-indigo-500 bg-indigo-50/50 ring-2 ring-indigo-500/20 shadow-xs"
+                    : "border-border/80 bg-muted/10 hover:bg-muted/20"
+                }`}
+              >
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="radio"
+                    id="dest_dealer"
+                    name="returnDestination"
+                    checked={returnDestination === "DEALER"}
+                    onChange={() => setReturnDestination("DEALER")}
+                    className="mt-0.5 accent-indigo-600 cursor-pointer"
+                  />
+                  <div>
+                    <label htmlFor="dest_dealer" className="font-bold text-[13px] text-foreground flex items-center gap-1.5 cursor-pointer">
+                      <Truck className="size-4 text-indigo-600" />
+                      <span>Return to Dealer / Supplier</span>
+                    </label>
+                    <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                      आइटम <strong>डीलर / सप्लायर</strong> को रिप्लेसमेंट / क्लेम हेतु भेजा जाएगा। यह दुकान के एक्टिव स्टॉक में नहीं जुड़ेगा।
+                    </p>
+                    <Badge tone="info" className="text-[9px] py-0 px-1.5 mt-2">
+                      Dealer Warranty / Debit Note
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* If Return to Dealer is selected, show Dealer Selector */}
+          {returnDestination === "DEALER" && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-3.5 space-y-2 animate-in-soft">
+              <Field label="Select Dealer / Supplier to Return * (डीलर / सप्लायर चुनें)">
+                <Select
+                  value={selectedDealerId}
+                  onChange={(e) => setSelectedDealerId(e.target.value)}
+                  required
+                  className="bg-white border-indigo-300 font-semibold"
+                >
+                  <option value="">-- Choose Dealer / Supplier --</option>
+                  {db.suppliers.map((sup) => (
+                    <option key={sup.id} value={sup.id}>
+                      {sup.name} {sup.phone ? `(${sup.phone})` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="text-[11px] text-indigo-900 font-medium flex items-start gap-1.5 pt-0.5">
+                <Info className="size-3.5 text-indigo-600 shrink-0 mt-0.5" />
+                <span>
+                  इस आइटम के लिए डीलर के खाते (Ledger) में परचेज रिटर्न / डेबिट एंट्री दर्ज की जाएगी और आइटम स्टॉक से हटा दिया जाएगा।
+                </span>
+              </div>
+            </div>
+          )}
+
+          {selectedSale && (
+            <div className="rounded-xl border border-border p-3 space-y-2 bg-muted/20">
+              <div className="text-[12px] font-bold text-foreground">Items in Bill {selectedSale.invoiceNo}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {returnDestination === "INVENTORY" ? (
+                  <span className="text-emerald-700 font-medium">
+                    📦 All items below will be returned to store inventory and made available for sale in POS.
+                  </span>
+                ) : (
+                  <span className="text-indigo-700 font-medium">
+                    🚚 All items below will be returned to Dealer ({supplierMap.get(selectedDealerId)?.name || "Dealer"}) and marked as 'PURCHASE_RETURNED'.
+                  </span>
+                )}
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
                 {selectedSale.items.map((item, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between text-[12px] p-2 rounded bg-[var(--surface-glass-strong)] border border-border"
+                    className="flex items-center justify-between text-[12px] p-2.5 rounded-lg bg-[var(--surface-glass-strong)] border border-border"
                   >
                     <div>
-                      <span className="font-semibold">{item.name}</span>
+                      <span className="font-semibold text-foreground">{item.name}</span>
                       {item.imei && <span className="ml-2 font-mono text-[11px] text-primary">(IMEI: {item.imei})</span>}
                     </div>
-                    <div className="num font-semibold">{inr(item.price * item.qty)}</div>
+                    <div className="num font-bold text-foreground">{inr(item.price * item.qty)}</div>
                   </div>
                 ))}
               </div>
@@ -262,7 +417,11 @@ function ReturnsPage() {
             <Button type="button" variant="ghost" onClick={() => setSaleReturnModal(false)}>
               Cancel
             </Button>
-            <Button type="submit">Confirm Return & Restock</Button>
+            <Button type="submit" variant="primary">
+              {returnDestination === "INVENTORY"
+                ? "Confirm Return & Restock to Inventory"
+                : "Confirm Return & Send to Dealer"}
+            </Button>
           </div>
         </form>
       </Modal>

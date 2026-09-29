@@ -153,6 +153,8 @@ interface StoreValue {
     items: LineItem[];
     reason: string;
     mode: ReturnDoc["mode"];
+    destination?: "INVENTORY" | "DEALER";
+    dealerId?: string;
   }) => void;
   recordPurchaseReturn: (input: {
     purchaseId: string;
@@ -461,7 +463,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const recordSaleReturn: StoreValue["recordSaleReturn"] = useCallback(
-    ({ saleId, items, reason, mode }) => {
+    ({ saleId, items, reason, mode, destination = "INVENTORY", dealerId }) => {
       setDb((d) => {
         const sale = d.sales.find((s) => s.id === saleId);
         if (!sale) return d;
@@ -477,21 +479,53 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           amount,
           reason,
           mode,
+          destination,
+          dealerId,
         };
+
+        const isDealerReturn = destination === "DEALER";
+
         const units = d.units.map((u) =>
           items.some((i) => i.unitId === u.id)
-            ? { ...u, status: "returned" as const, saleId: undefined, customerId: undefined }
+            ? {
+                ...u,
+                status: isDealerReturn ? ("PURCHASE_RETURNED" as const) : ("available" as const),
+                saleId: undefined,
+                customerId: undefined,
+              }
             : u,
         );
+
         const products = d.products.map((p) => {
           const line = items.filter((i) => i.productId === p.id && !i.unitId);
           if (!line.length || p.tracked) return p;
-          return { ...p, qty: p.qty + line.reduce((s, i) => s + i.qty, 0) };
+          return isDealerReturn ? p : { ...p, qty: p.qty + line.reduce((s, i) => s + i.qty, 0) };
         });
-        return { ...d, returns: [doc, ...d.returns], units, products };
+
+        const additionalReturns: ReturnDoc[] = [];
+        if (isDealerReturn && dealerId) {
+          additionalReturns.push({
+            id: uid("ret"),
+            type: "purchase",
+            refId: saleId,
+            refNo: `DR-${sale.invoiceNo}`,
+            date: todayISO(),
+            partyId: dealerId,
+            items,
+            amount,
+            reason: `Forwarded to Dealer from Sale Return ${sale.invoiceNo}: ${reason}`,
+            mode: "Credit Note",
+            destination: "DEALER",
+            dealerId,
+          });
+        }
+
+        return { ...d, returns: [...additionalReturns, doc, ...d.returns], units, products };
       });
 
-      returnsApi.recordSaleReturn({ saleId, items, reason, mode }).catch(() => {});
+      returnsApi
+        .recordSaleReturn({ saleId, items, reason, mode, destination, dealerId })
+        .catch(() => {});
     },
     [],
   );

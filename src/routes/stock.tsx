@@ -17,6 +17,7 @@ import {
 import { useStore } from "@/lib/store";
 import { inr, maskImei } from "@/lib/format";
 import { UNIT_STATUSES, type UnitStatus } from "@/lib/types";
+import { ExcelProductImportModal } from "@/components/products/ExcelProductImportModal";
 
 export const Route = createFileRoute("/stock")({
   head: () => ({
@@ -26,8 +27,9 @@ export const Route = createFileRoute("/stock")({
 });
 
 function StockPage() {
-  const { db, setUnitStatus } = useStore();
+  const { db, setUnitStatus, refreshFromBackend } = useStore();
   const [query, setQuery] = useState("");
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("available");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [brandFilter, setBrandFilter] = useState<string>("All");
@@ -105,13 +107,20 @@ function StockPage() {
   };
 
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="space-y-4 p-3 sm:p-4 md:p-6">
       <PageHead
         title="Stock & Serial Tracker"
         sub="Monitor individual IMEI lifecycles from intake to sold, damaged, or returned."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setImportModalOpen(true)} className="gap-1.5 font-bold shadow-xs">
+              📥 Import Excel / CSV
+            </Button>
+          </div>
+        }
       />
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-2 md:grid-cols-4">
         <Stat label="Available Units" value={String(availableCount)} tone="success" />
         <Stat label="Stock Asset Value" value={inr(stockValuation)} />
         <Stat label="Units Sold" value={String(soldCount)} />
@@ -128,7 +137,7 @@ function StockPage() {
                 placeholder="Search IMEI, model, brand, SKU..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-48 sm:w-60"
+                className="w-full sm:w-52 md:w-60"
               />
               <Select
                 value={categoryFilter}
@@ -230,6 +239,15 @@ function StockPage() {
           </Table>
         )}
       </Card>
+
+      {/* EXCEL / CSV BULK IMPORT MODAL */}
+      <ExcelProductImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onSuccess={() => {
+          refreshFromBackend();
+        }}
+      />
     </div>
   );
 }

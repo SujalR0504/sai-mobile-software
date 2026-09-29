@@ -18,7 +18,9 @@ import {
 } from "@/components/ui";
 import { supplierDue, useStore } from "@/lib/store";
 import { inr, todayISO } from "@/lib/format";
-import { PAYMENT_MODES, type PaymentMode, type Supplier } from "@/lib/types";
+import { PAYMENT_MODES, type PaymentMode, type Supplier, type Purchase } from "@/lib/types";
+import { InvoiceModal } from "@/components/invoice/InvoiceModal";
+import { purchaseToInvoiceProps } from "@/components/invoice/invoiceAdapters";
 
 export const Route = createFileRoute("/suppliers")({
   head: () => ({
@@ -36,6 +38,12 @@ function SuppliersPage() {
   const [targetDealer, setTargetDealer] = useState<Supplier | null>(null);
   const [ledgerDealer, setLedgerDealer] = useState<Supplier | null>(null);
   const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+
+  // Dealer Bills View State
+  const [billsDealer, setBillsDealer] = useState<Supplier | null>(null);
+  const [billsModalOpen, setBillsModalOpen] = useState(false);
+  const [selectedPurchaseInvoice, setSelectedPurchaseInvoice] = useState<Purchase | null>(null);
+  const [billsSearchQuery, setBillsSearchQuery] = useState("");
 
   const [form, setForm] = useState({
     name: "",
@@ -84,6 +92,22 @@ function SuppliersPage() {
   const totalPayable = useMemo(() => {
     return db.suppliers.reduce((sum, s) => sum + supplierDue(db, s.id), 0);
   }, [db]);
+
+  const dealerBills = useMemo(() => {
+    if (!billsDealer) return [];
+    return db.purchases.filter((p) => p.supplierId === billsDealer.id);
+  }, [db.purchases, billsDealer]);
+
+  const filteredDealerBills = useMemo(() => {
+    const q = billsSearchQuery.trim().toLowerCase();
+    if (!q) return dealerBills;
+    return dealerBills.filter(
+      (b) =>
+        b.invoiceNo.toLowerCase().includes(q) ||
+        (b.date && b.date.toLowerCase().includes(q)) ||
+        (b.purchaseType && b.purchaseType.toLowerCase().includes(q))
+    );
+  }, [dealerBills, billsSearchQuery]);
 
   const handleSaveDealer = (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,7 +176,7 @@ function SuppliersPage() {
   }, [dealerPayments]);
 
   return (
-    <div className="space-y-4 p-4 md:p-6">
+    <div className="space-y-4 p-3 sm:p-4 md:p-6">
       <PageHead
         title="Dealers & Wholesale Distributors"
         sub="Manage authorized mobile distributors, purchase bills, and vendor ledger balances."
@@ -161,7 +185,7 @@ function SuppliersPage() {
         }
       />
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-2 md:grid-cols-4">
         <Stat label="Total Dealers" value={String(db.suppliers.length)} />
         <Stat
           label="Dealer Payables (Dues)"
@@ -179,7 +203,7 @@ function SuppliersPage() {
               placeholder="Search dealer name or phone..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-48 sm:w-64"
+              className="w-full sm:w-64"
             />
           }
         />
@@ -206,13 +230,37 @@ function SuppliersPage() {
                   </Td>
                   <Td>{s.address || "—"}</Td>
                   <Td right mono>
-                    {purCount} bills
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBillsDealer(s);
+                        setBillsSearchQuery("");
+                        setBillsModalOpen(true);
+                      }}
+                      className="cursor-pointer font-bold text-primary hover:underline hover:text-primary/80 transition-colors inline-flex items-center gap-1"
+                      title="View all purchase bills for this dealer"
+                    >
+                      <span>{purCount} bills</span>
+                      <span className="text-[10px]">↗</span>
+                    </button>
                   </Td>
                   <Td right mono className={due > 0 ? "font-bold text-warning" : "text-muted-foreground"}>
                     {inr(due)}
                   </Td>
                   <Td>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setBillsDealer(s);
+                          setBillsSearchQuery("");
+                          setBillsModalOpen(true);
+                        }}
+                        className="font-bold text-primary border-primary/40 hover:bg-primary/5 shadow-2xs gap-1"
+                      >
+                        📄 Bills
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
@@ -488,10 +536,32 @@ function SuppliersPage() {
                       <tr key={entry.id} className="hover:bg-muted/30">
                         <td className="py-2 px-3 font-mono">{entry.date}</td>
                         <td className="py-2 px-3">
-                          <div className="font-semibold">{entry.notes || entry.referenceId || "Transaction"}</div>
-                          {entry.referenceId && (
-                            <div className="text-[10px] text-muted-foreground font-mono">Ref: {entry.referenceId}</div>
-                          )}
+                          <div className="flex items-center justify-between gap-1">
+                            <div>
+                              <div className="font-semibold">{entry.notes || entry.referenceId || "Transaction"}</div>
+                              {entry.referenceId && (
+                                <div className="text-[10px] text-muted-foreground font-mono">Ref: {entry.referenceId}</div>
+                              )}
+                            </div>
+                            {entry.type === "PURCHASE" && (
+                              (() => {
+                                const p = db.purchases.find(
+                                  (item) => item.invoiceNo === entry.referenceId || item.id === entry.referenceId
+                                );
+                                if (!p) return null;
+                                return (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-[10px] h-6 px-2 py-0 border-primary/40 text-primary hover:bg-primary/5 shrink-0"
+                                    onClick={() => setSelectedPurchaseInvoice(p)}
+                                  >
+                                    👁️ View Bill
+                                  </Button>
+                                );
+                              })()
+                            )}
+                          </div>
                         </td>
                         <td className="py-2 px-3">
                           <Badge tone={entry.type === "PAYMENT" ? "success" : entry.type === "PURCHASE" ? "warning" : "info"} className="text-[9.5px]">
@@ -568,8 +638,8 @@ function SuppliersPage() {
               {dealerPurchases.length === 0 ? (
                 <div className="text-[12px] text-muted-foreground italic py-2">No purchase records found for this dealer.</div>
               ) : (
-                <div className="max-h-48 overflow-y-auto rounded-xl border border-border">
-                  <table className="w-full text-left text-[11px]">
+                <div className="max-h-48 overflow-y-auto overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full min-w-[580px] text-left text-[11px]">
                     <thead className="bg-muted/40 text-muted-foreground font-semibold">
                       <tr>
                         <th className="p-2">Invoice #</th>
@@ -578,6 +648,7 @@ function SuppliersPage() {
                         <th className="p-2 text-right">Taxable</th>
                         <th className="p-2 text-right">Total</th>
                         <th className="p-2 text-right">Paid</th>
+                        <th className="p-2 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
@@ -593,6 +664,16 @@ function SuppliersPage() {
                           <td className="p-2 text-right font-mono">{inr(p.subtotal || p.taxableValue || 0)}</td>
                           <td className="p-2 text-right font-mono font-bold">{inr(p.total)}</td>
                           <td className="p-2 text-right font-mono text-emerald-600">{inr(p.paid)}</td>
+                          <td className="p-2 text-center">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-[10px] h-6 px-2 py-0 border-primary/30 text-primary hover:bg-primary/5 cursor-pointer"
+                              onClick={() => setSelectedPurchaseInvoice(p)}
+                            >
+                              👁️ View Bill
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -710,6 +791,162 @@ function SuppliersPage() {
           </div>
         </Modal>
       ) : null}
+
+      {/* Dealer Purchase Bills & Invoices Modal */}
+      {billsModalOpen && billsDealer && (
+        <Modal
+          open={billsModalOpen}
+          onClose={() => setBillsModalOpen(false)}
+          title={`Purchase Invoices & Bills — ${billsDealer.name}`}
+          wide
+        >
+          <div className="space-y-4">
+            {/* Header Dealer Profile / Stats Summary */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 rounded-xl border border-border bg-muted/20 p-3 text-[12px]">
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Dealer / Firm</span>
+                <span className="font-bold text-foreground">{billsDealer.company || billsDealer.name}</span>
+                <span className="text-muted-foreground block text-[10.5px]">{billsDealer.phone}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">GSTIN</span>
+                <span className="font-mono font-semibold text-foreground">{billsDealer.gstin || "Unregistered"}</span>
+                <span className="text-muted-foreground block text-[10.5px]">{billsDealer.city || "Harda"}, {billsDealer.state || "MP"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Total Purchased</span>
+                <span className="text-[15px] font-bold num text-foreground">
+                  {inr(dealerBills.reduce((s, b) => s + b.total, 0))}
+                </span>
+                <span className="text-muted-foreground block text-[10.5px]">{dealerBills.length} purchase invoices</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block text-[11px]">Payable Balance Due</span>
+                <span className={`text-[15px] font-bold num ${supplierDue(db, billsDealer.id) > 0 ? "text-destructive" : "text-emerald-600"}`}>
+                  {inr(supplierDue(db, billsDealer.id))}
+                </span>
+                {supplierDue(db, billsDealer.id) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillsModalOpen(false);
+                      setTargetDealer(billsDealer);
+                      setPayAmount(supplierDue(db, billsDealer.id));
+                      setPayMode("Bank");
+                      const def = bankAccounts.find((a) => a.isDefault) || bankAccounts[0];
+                      setPayAccountId(def?.id || "");
+                      setPayRef("");
+                      setPayNote(`Payment to ${billsDealer.name}`);
+                      setPayModalOpen(true);
+                    }}
+                    className="text-[10px] text-primary hover:underline font-bold block"
+                  >
+                    + Pay Dealer
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter Search */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[12px] font-bold text-foreground">
+                Inward Purchase Bills ({filteredDealerBills.length})
+              </div>
+              <Input
+                placeholder="Search invoice #, date, type..."
+                value={billsSearchQuery}
+                onChange={(e) => setBillsSearchQuery(e.target.value)}
+                className="w-48 sm:w-60 text-xs"
+              />
+            </div>
+
+            {filteredDealerBills.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-[12px] border border-dashed border-border rounded-xl">
+                No purchase bills found for this dealer.
+              </div>
+            ) : (
+              <div className="max-h-[55vh] overflow-y-auto overflow-x-auto rounded-xl border border-border">
+                <table className="w-full min-w-[650px] text-left text-[11.5px]">
+                  <thead className="bg-muted/60 text-muted-foreground font-semibold sticky top-0 border-b border-border">
+                    <tr>
+                      <th className="py-2.5 px-3">Invoice #</th>
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-3">Type</th>
+                      <th className="py-2.5 px-3 text-center">Items</th>
+                      <th className="py-2.5 px-3 text-right">Taxable</th>
+                      <th className="py-2.5 px-3 text-right">Total Bill</th>
+                      <th className="py-2.5 px-3 text-right">Paid</th>
+                      <th className="py-2.5 px-3 text-right">Due</th>
+                      <th className="py-2.5 px-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {filteredDealerBills.map((b) => {
+                      const due = b.dueAmount !== undefined ? b.dueAmount : Math.max(0, b.total - b.paid);
+                      return (
+                        <tr key={b.id} className="hover:bg-muted/20 transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-bold text-primary">
+                            {b.invoiceNo}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-muted-foreground">
+                            {b.date}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <Badge tone={b.purchaseType === "NON_GST" ? "neutral" : "info"} className="text-[10px]">
+                              {b.purchaseType || "GST"}
+                            </Badge>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono">
+                            {b.items?.length || 0}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-muted-foreground">
+                            {inr(b.taxableValue || b.subtotal || b.total)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
+                            {inr(b.total)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-emerald-600 font-medium">
+                            {inr(b.paid)}
+                          </td>
+                          <td className={`py-2.5 px-3 text-right font-mono font-bold ${due > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                            {inr(due)}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setSelectedPurchaseInvoice(b)}
+                              className="gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/10 shadow-2xs cursor-pointer text-xs"
+                            >
+                              <span>👁️</span>
+                              <span>View Bill</span>
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+              <Button variant="outline" size="sm" onClick={() => setBillsModalOpen(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Universal Purchase Invoice Modal for viewing full bill */}
+      {selectedPurchaseInvoice && (
+        <InvoiceModal
+          open={Boolean(selectedPurchaseInvoice)}
+          onClose={() => setSelectedPurchaseInvoice(null)}
+          {...purchaseToInvoiceProps(selectedPurchaseInvoice, db)}
+        />
+      )}
     </div>
   );
 }

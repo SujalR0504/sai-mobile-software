@@ -182,15 +182,15 @@ export function Table({
 }) {
   const colHeaders = head || headers || [];
   return (
-    <div className="overflow-x-auto rounded-xl">
-      <table className="w-full text-[13px]">
+    <div className="overflow-x-auto rounded-xl -mx-1 sm:mx-0">
+      <table className="w-full min-w-full text-[12px] sm:text-[13px]">
         <thead>
-          <tr className="border-b border-border/80 bg-foreground/[0.02] text-left text-[11px] tracking-[0.06em] text-muted-foreground uppercase font-semibold">
+          <tr className="border-b border-border/80 bg-foreground/[0.02] text-left text-[10.5px] sm:text-[11px] tracking-[0.06em] text-muted-foreground uppercase font-semibold">
             {colHeaders.map((h) => (
               <th
                 key={h}
                 className={cn(
-                  "px-4 py-3 font-semibold whitespace-nowrap",
+                  "px-3 sm:px-4 py-2.5 sm:py-3 font-semibold whitespace-nowrap",
                   h.startsWith(">") && "text-right",
                 )}
               >
@@ -229,7 +229,7 @@ export function Td({
 }) {
   return (
     <td
-      className={cn("px-4 py-3.5 align-middle", right && "text-right", mono && "num", className)}
+      className={cn("px-3 sm:px-4 py-2.5 sm:py-3.5 align-middle", right && "text-right", mono && "num", className)}
     >
       {children}
     </td>
@@ -271,15 +271,15 @@ export function Modal({
 }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-200">
       <div
         className={cn(
-          "bg-white/95 my-8 w-full rounded-2xl border border-white/80 shadow-2xl shadow-slate-900/20 animate-in-soft overflow-hidden",
-          wide ? "max-w-3xl" : "max-w-lg",
+          "bg-white/95 my-3 sm:my-6 w-full rounded-2xl border border-white/80 shadow-2xl shadow-slate-900/20 animate-in-soft overflow-hidden transition-all",
+          wide ? "max-w-[96vw] md:max-w-3xl lg:max-w-4xl" : "max-w-[96vw] sm:max-w-lg",
         )}
       >
-        <div className="flex items-center justify-between border-b border-border/80 px-5 py-4 bg-slate-50/50">
-          <div className="text-[14px] font-bold tracking-tight text-foreground">{title}</div>
+        <div className="flex items-center justify-between border-b border-border/80 px-4 sm:px-5 py-3 sm:py-4 bg-slate-50/50">
+          <div className="text-[13px] sm:text-[14px] font-bold tracking-tight text-foreground">{title}</div>
           <button
             onClick={onClose}
             className="rounded-lg p-1.5 text-muted-foreground hover:bg-slate-200/60 hover:text-foreground transition-colors cursor-pointer"
@@ -288,7 +288,7 @@ export function Modal({
             ✕
           </button>
         </div>
-        <div className="p-5 max-h-[85vh] overflow-y-auto">{children}</div>
+        <div className="p-3.5 sm:p-5 max-h-[85vh] overflow-y-auto">{children}</div>
       </div>
     </div>
   );

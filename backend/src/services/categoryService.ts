@@ -584,3 +584,177 @@ export function validateHierarchyRelationships(
     }
   }
 }
+
+export interface BulkImportProductRow {
+  category?: string;
+  subcategory?: string;
+  brand: string;
+  model: string;
+  sellingPrice?: number;
+  purchasePrice?: number;
+  costPrice?: number;
+  mrp?: number;
+  gst?: number;
+  ram?: string;
+  storage?: string;
+  color?: string;
+  barcode?: string;
+  hsn?: string;
+  tracked?: boolean | string;
+  openingStock?: number;
+}
+
+export function bulkImportHierarchyAndProducts(
+  db: DatabaseSync,
+  rows: BulkImportProductRow[],
+  businessId = "biz_default"
+) {
+  let categoriesCreated = 0;
+  let subcategoriesCreated = 0;
+  let brandsCreated = 0;
+  let modelsCreated = 0;
+  let productsCreated = 0;
+  let productsUpdated = 0;
+  const errors: string[] = [];
+
+  db.exec("BEGIN TRANSACTION;");
+  try {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r.brand || !r.brand.trim() || !r.model || !r.model.trim()) {
+        errors.push(`Row ${i + 1}: Brand and Model are required.`);
+        continue;
+      }
+
+      // 1. Category
+      let catId: string | undefined = undefined;
+      const catName = r.category?.trim();
+      if (catName) {
+        const cat = createCategory(db, { name: catName, businessId, throwOnDuplicate: false });
+        catId = cat.id;
+        if (cat.createdAt && new Date(cat.createdAt).getTime() > Date.now() - 5000) {
+          categoriesCreated++;
+        }
+      }
+
+      // 2. Subcategory
+      let subcatId: string | undefined = undefined;
+      const subcatName = r.subcategory?.trim();
+      if (subcatName && catId) {
+        const sub = createSubcategory(db, { categoryId: catId, name: subcatName, businessId, throwOnDuplicate: false });
+        subcatId = sub.id;
+        if (sub.createdAt && new Date(sub.createdAt).getTime() > Date.now() - 5000) {
+          subcategoriesCreated++;
+        }
+      }
+
+      // 3. Brand
+      const brandName = r.brand.trim();
+      const brand = createBrand(db, { name: brandName, categoryId: catId, subcategoryId: subcatId, businessId, throwOnDuplicate: false });
+      if (brand.createdAt && new Date(brand.createdAt).getTime() > Date.now() - 5000) {
+        brandsCreated++;
+      }
+
+      // 4. Model
+      const modelName = r.model.trim();
+      const model = createModel(db, { brandId: brand.id, categoryId: catId, subcategoryId: subcatId, name: modelName, businessId, throwOnDuplicate: false });
+      if (model.createdAt && new Date(model.createdAt).getTime() > Date.now() - 5000) {
+        modelsCreated++;
+      }
+
+      // 5. Product in Catalog
+      const isMobile = !r.category || /mobile|phone|tablet|smartphone/i.test(r.category);
+      const isTracked = r.tracked !== undefined
+        ? (typeof r.tracked === "string" ? r.tracked.toLowerCase() === "true" || r.tracked === "1" || r.tracked.toLowerCase() === "yes" : Boolean(r.tracked))
+        : isMobile;
+
+      const pPrice = Number(r.purchasePrice ?? r.costPrice ?? 0) || 0;
+      const sPrice = Number(r.sellingPrice ?? r.mrp ?? pPrice) || pPrice;
+      const mrp = Number(r.mrp ?? sPrice) || sPrice;
+      const gst = r.gst !== undefined && !isNaN(Number(r.gst)) ? Number(r.gst) : 18;
+
+      const ram = r.ram?.trim() || "";
+      const storage = r.storage?.trim() || "";
+      const color = r.color?.trim() || "";
+      const specs = [ram && `${ram} RAM`, storage, color].filter(Boolean).join(" ");
+      const fullName = `${brandName} ${modelName}${specs ? ` ${specs}` : ""}`.trim();
+
+      // Check if product already exists with this model and specs
+      const existingProduct = db.prepare(`
+        SELECT * FROM products
+        WHERE model_id = ?
+          AND LOWER(TRIM(COALESCE(ram, ''))) = LOWER(TRIM(?))
+          AND LOWER(TRIM(COALESCE(storage, ''))) = LOWER(TRIM(?))
+          AND LOWER(TRIM(COALESCE(color, ''))) = LOWER(TRIM(?))
+      `).get(model.id, ram, storage, color) as any;
+
+      if (existingProduct) {
+        db.prepare(`
+          UPDATE products
+          SET purchase_price = COALESCE(NULLIF(?, 0), purchase_price),
+              selling_price = COALESCE(NULLIF(?, 0), selling_price),
+              mrp = COALESCE(NULLIF(?, 0), mrp),
+              category_id = COALESCE(?, category_id),
+              subcategory_id = COALESCE(?, subcategory_id),
+              brand_id = COALESCE(?, brand_id)
+          WHERE id = ?
+        `).run(pPrice, sPrice, mrp, catId ?? null, subcatId ?? null, brand.id, existingProduct.id);
+        productsUpdated++;
+      } else {
+        const prodId = uid("p");
+        const defaultHsn = isTracked ? "85171300" : "85177900";
+        const hsn = r.hsn?.trim() || defaultHsn;
+        const barcode = r.barcode?.trim() || null;
+        const initialQty = (!isTracked && r.openingStock) ? Number(r.openingStock) : 0;
+
+        db.prepare(`
+          INSERT INTO products (
+            id, business_id, category_id, subcategory_id, brand_id, model_id,
+            name, category, brand, model, ram, storage, color,
+            purchase_price, selling_price, mrp, gst, tracked, hsn, barcode, qty, reorder_level
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          prodId,
+          businessId,
+          catId ?? null,
+          subcatId ?? null,
+          brand.id,
+          model.id,
+          fullName,
+          catName || "Smartphones",
+          brandName,
+          modelName,
+          ram || null,
+          storage || null,
+          color || null,
+          pPrice,
+          sPrice,
+          mrp,
+          gst,
+          isTracked ? 1 : 0,
+          hsn,
+          barcode,
+          initialQty,
+          5
+        );
+        productsCreated++;
+      }
+    }
+
+    db.exec("COMMIT;");
+    return {
+      success: true,
+      totalRows: rows.length,
+      categoriesCreated,
+      subcategoriesCreated,
+      brandsCreated,
+      modelsCreated,
+      productsCreated,
+      productsUpdated,
+      errors,
+    };
+  } catch (err: any) {
+    db.exec("ROLLBACK;");
+    throw err;
+  }
+}

@@ -783,6 +783,8 @@ export interface ReturnDoc {
   reason: string;
   condition?: "GOOD" | "DAMAGED" | "UNDER_INSPECTION";
   mode: "Refund" | "Credit Note";
+  destination?: "INVENTORY" | "DEALER";
+  dealerId?: string;
 }
 
 export type RepairStatus =
