@@ -3,7 +3,24 @@ import { getIMEI, validateIMEI } from "../services/imeiService";
 import { searchImei, setUnitStatus } from "../services/stockService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
+import { extractImeisFromImage } from "../services/imeiOcrService";
+
 export async function imeiRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // OCR Image / Camera Frame IMEI Extraction
+  if (pathname === "/api/imei/ocr-scan" && method === "POST") {
+    try {
+      const body = await request.json();
+      const image = body.image || body.base64;
+      if (!image) {
+        return errorResponse("Missing image base64 data", 400, "VALIDATION_ERROR");
+      }
+      const result = await extractImeisFromImage(image);
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(err?.message || "Failed to process image OCR", 500, "OCR_ERROR");
+    }
+  }
+
   // Validate IMEI format & duplicate check
   if (pathname === "/api/imei/validate" && method === "POST") {
     const body = await request.json();

@@ -21,6 +21,8 @@ import { inr } from "@/lib/format";
 import { CATEGORIES, type Category, type Product } from "@/lib/types";
 import { QuickProductModal } from "@/components/QuickProductModal";
 import { ExcelProductImportModal } from "@/components/products/ExcelProductImportModal";
+import { ProductImeiModal } from "@/components/products/ProductImeiModal";
+import { Scan } from "lucide-react";
 
 export const Route = createFileRoute("/products")({
   head: () => ({
@@ -60,7 +62,6 @@ export function ProductsPage() {
 
   const [imeiModalOpen, setImeiModalOpen] = useState(false);
   const [targetProduct, setTargetProduct] = useState<Product | null>(null);
-  const [newImeis, setNewImeis] = useState("");
 
   // Master Management State
   const [masterLevel, setMasterLevel] = useState<"categories" | "subcategories" | "brands" | "models">("categories");
@@ -569,23 +570,6 @@ export function ProductsPage() {
     }
   };
 
-  const handleAddImeis = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!targetProduct) return;
-    const lines = newImeis
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (!lines.length) return;
-
-    const rows = lines.map((imei) => ({
-      imei1: imei,
-      purchasePrice: targetProduct.purchasePrice,
-    }));
-    addUnits(targetProduct.id, rows);
-    setImeiModalOpen(false);
-    setNewImeis("");
-  };
 
   // Master Actions (CRUD)
   const saveCategory = async (e: React.FormEvent) => {
@@ -1069,11 +1053,13 @@ export function ProductsPage() {
                               variant="soft"
                               onClick={() => {
                                 setTargetProduct(p);
-                                setNewImeis("");
                                 setImeiModalOpen(true);
                               }}
+                              className="gap-1 font-medium"
+                              title="Add or Scan IMEIs"
                             >
-                              + IMEIs
+                              <Scan className="w-3.5 h-3.5 text-primary" />
+                              + IMEIs / Scan
                             </Button>
                           )}
                           <Button
@@ -1909,30 +1895,22 @@ export function ProductsPage() {
         </div>
       </Modal>
 
-      {/* Add IMEIs Modal */}
-      <Modal
+      {/* Add & Live Scan IMEIs Modal */}
+      <ProductImeiModal
         open={imeiModalOpen}
-        onClose={() => setImeiModalOpen(false)}
-        title={`Add IMEIs — ${targetProduct?.name}`}
-      >
-        <form onSubmit={handleAddImeis} className="space-y-3">
-          <Field label="Paste IMEIs (one per line)">
-            <textarea
-              className="w-full h-32 rounded-md border border-border bg-[var(--surface-glass-strong)] p-2 text-[12px] font-mono outline-none focus:border-primary"
-              placeholder="354012000158380&#10;354012000158381"
-              value={newImeis}
-              onChange={(e) => setNewImeis(e.target.value)}
-              required
-            />
-          </Field>
-          <div className="flex justify-end gap-2 pt-2 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setImeiModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Add to Inventory</Button>
-          </div>
-        </form>
-      </Modal>
+        onClose={() => {
+          setImeiModalOpen(false);
+          setTargetProduct(null);
+        }}
+        product={targetProduct}
+        existingUnits={db.units}
+        currentStock={targetProduct ? stockOf(db, targetProduct.id) : 0}
+        onAddUnits={(productId, rows) => {
+          addUnits(productId, rows);
+          setToastMsg(`Successfully added ${rows.length} units with scanned IMEIs!`);
+          setTimeout(() => setToastMsg(""), 4000);
+        }}
+      />
 
       {/* Category Modal */}
       <Modal

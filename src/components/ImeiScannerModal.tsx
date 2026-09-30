@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Input, Modal } from "./ui";
 import { Html5Qrcode } from "html5-qrcode";
+import { Camera, FileText, Loader2, RefreshCw } from "lucide-react";
+import { captureAndExtractImeis } from "@/lib/imeiOcrClient";
 
 export interface ImeiScannerModalProps {
   open: boolean;
@@ -46,11 +48,13 @@ export function ImeiScannerModal({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [isOcrReading, setIsOcrReading] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
   const lastScannedRef = useRef<{ code: string; time: number }>({ code: "", time: 0 });
+  const ocrBusyRef = useRef<boolean>(false);
 
   // Sync state if initial list updates
   useEffect(() => {
@@ -164,6 +168,34 @@ export function ImeiScannerModal({
     setFacingMode((prev) => (prev === "environment" ? "user" : "environment"));
   };
 
+  const handleSnapOcr = async () => {
+    if (!videoRef.current || ocrBusyRef.current) return;
+    ocrBusyRef.current = true;
+    setIsOcrReading(true);
+
+    try {
+      const res = await captureAndExtractImeis(videoRef.current, { cropToCenter: true, maxWidth: 1000 });
+      if (res.success && res.imeis.length > 0) {
+        for (const im of res.imeis) {
+          validateAndAddImei(im);
+        }
+      } else {
+        setFeedbackMsg({
+          type: "error",
+          text: "Could not read sticker numbers. Please align phone box sticker within frame.",
+        });
+      }
+    } catch {
+      setFeedbackMsg({
+        type: "error",
+        text: "Sticker OCR recognition failed. Please try again.",
+      });
+    } finally {
+      setIsOcrReading(false);
+      ocrBusyRef.current = false;
+    }
+  };
+
   // Camera stream and detection setup
   useEffect(() => {
     if (!open) {
@@ -236,13 +268,43 @@ export function ImeiScannerModal({
         }
 
         // Detection Strategy:
-        // 1. Try BarcodeDetector if natively supported in window
-        // 2. Otherwise fall back to Html5Qrcode on hidden canvas / elements
+        // 1. Continuous OCR Sticker Text Scanner (every 1400ms)
+        const ocrInterval = setInterval(async () => {
+          if (
+            videoRef.current &&
+            videoRef.current.readyState >= 2 &&
+            capturedImeis.length < requiredCount &&
+            !ocrBusyRef.current &&
+            isSubscribed
+          ) {
+            ocrBusyRef.current = true;
+            try {
+              const res = await captureAndExtractImeis(videoRef.current, { cropToCenter: true, maxWidth: 900 });
+              if (res.success && res.imeis.length > 0 && isSubscribed) {
+                const now = Date.now();
+                for (const im of res.imeis) {
+                  if (
+                    lastScannedRef.current.code !== im ||
+                    now - lastScannedRef.current.time > 2000
+                  ) {
+                    lastScannedRef.current = { code: im, time: now };
+                    validateAndAddImei(im);
+                  }
+                }
+              }
+            } catch {
+            } finally {
+              ocrBusyRef.current = false;
+            }
+          }
+        }, 1400);
+
+        // 2. BarcodeDetector Fallback (Reject 13-digit EANs)
         if ("BarcodeDetector" in window) {
           try {
             // @ts-ignore
             const detector = new BarcodeDetector({
-              formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code", "data_matrix"],
+              formats: ["code_128", "code_39", "qr_code", "data_matrix"],
             });
 
             scanInterval = setInterval(async () => {
@@ -256,7 +318,11 @@ export function ImeiScannerModal({
                   if (barcodes && barcodes.length > 0) {
                     const val = barcodes[0].rawValue?.trim();
                     const now = Date.now();
-                    if (val && (lastScannedRef.current.code !== val || now - lastScannedRef.current.time > 1500)) {
+                    if (
+                      val &&
+                      /^\d{14,16}$/.test(val) &&
+                      (lastScannedRef.current.code !== val || now - lastScannedRef.current.time > 2000)
+                    ) {
                       lastScannedRef.current = { code: val, time: now };
                       validateAndAddImei(val);
                     }
@@ -418,10 +484,10 @@ export function ImeiScannerModal({
                   </div>
 
                   {/* Animated laser line */}
-                  <div className="w-full h-0.5 bg-red-500/90 shadow-[0_0_8px_#ef4444] animate-pulse" />
+                  <div className="w-full h-0.5 bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse" />
 
-                  <div className="text-[11px] font-mono text-emerald-300 font-bold tracking-wider bg-slate-950/70 px-2.5 py-0.5 rounded-full">
-                    ALIGN 1D / IMEI BARCODE
+                  <div className="text-[11px] font-mono text-emerald-300 font-bold tracking-wider bg-slate-950/80 px-2.5 py-0.5 rounded-full border border-emerald-500/40">
+                    ALIGN &quot;IMEI1 / IMEI2&quot; TEXT HERE
                   </div>
 
                   <div className="w-full flex justify-between">
@@ -436,11 +502,32 @@ export function ImeiScannerModal({
                 <Button
                   type="button"
                   size="sm"
+                  variant="soft"
+                  onClick={handleSnapOcr}
+                  disabled={isOcrReading}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white border-none text-[11px] h-8 gap-1.5 shadow-md font-bold"
+                >
+                  {isOcrReading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Reading...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-3.5 h-3.5" />
+                      📸 Snap Sticker Text
+                    </>
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  size="sm"
                   variant="outline"
                   onClick={handleToggleCamera}
                   className="bg-slate-900/80 text-white border-slate-700 hover:bg-slate-800 text-[11px] h-8 gap-1.5 shadow-md"
                 >
-                  🔄 Switch Camera ({facingMode === "environment" ? "Back" : "Front"})
+                  <RefreshCw className="w-3 h-3" /> Flip ({facingMode === "environment" ? "Back" : "Front"})
                 </Button>
               </div>
 

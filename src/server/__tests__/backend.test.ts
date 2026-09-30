@@ -95,6 +95,7 @@ async function runTests() {
   const newImei = "99" + String(Date.now()).slice(-13);
 
   const purchasePayload = {
+    invoiceNo: `PUR-TEST-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     supplierId: dbData.suppliers[0].id,
     items: [
       {
@@ -163,8 +164,23 @@ async function runTests() {
   console.log(`✓ Repair status updated to 'Ready'`);
 
   // 9. Employee & Attendance Geo-fence Workflow
-  const empRes = await handleApiRequest(new Request("http://localhost:5173/api/employees"));
-  const employees = await empRes.json();
+  let empRes = await handleApiRequest(new Request("http://localhost:5173/api/employees"));
+  let employees = await empRes.json();
+  if (employees.length === 0) {
+    await handleApiRequest(new Request("http://localhost:5173/api/employees", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test Staff",
+        mobile: "9876543210",
+        role: "SALES",
+        salary: 20000,
+        permissions: ["POS"]
+      })
+    }));
+    empRes = await handleApiRequest(new Request("http://localhost:5173/api/employees"));
+    employees = await empRes.json();
+  }
   console.assert(employees.length > 0, "Employees list not empty");
   const testEmp = employees[0];
   console.log(`✓ Employees API verified (${employees.length} employees)`);

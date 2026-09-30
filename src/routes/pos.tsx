@@ -28,6 +28,7 @@ import { NewSaleCustomerModal } from "@/components/pos/NewSaleCustomerModal";
 import { QuickCollectDueModal } from "@/components/pos/QuickCollectDueModal";
 import { PriceAdjustModal } from "@/components/pos/PriceAdjustModal";
 import { CustomAmountModal } from "@/components/pos/CustomAmountModal";
+import { DirectManualBillModal } from "@/components/pos/DirectManualBillModal";
 
 export const Route = createFileRoute("/pos")({
   head: () => ({
@@ -104,6 +105,13 @@ function POS() {
   const [adjustPriceItemIndex, setAdjustPriceItemIndex] = useState<number | null>(null);
   // Custom Amount / Extra Charge modal state
   const [customAmountModalOpen, setCustomAmountModalOpen] = useState(false);
+  // Direct Bill / Manual Item modal state
+  const [directBillModalOpen, setDirectBillModalOpen] = useState(false);
+  const [directBillPrefill, setDirectBillPrefill] = useState<{
+    name?: string;
+    price?: number;
+    gst?: number;
+  }>({});
 
   // Customer outstanding balance due
   const customerDue = useMemo(() => {
@@ -873,6 +881,21 @@ function POS() {
           )}
 
           {/* VIEW RECENT BILLS BUTTON */}
+          {/* DIRECT BILL / MANUAL SALE BUTTON */}
+          <Button
+            size="sm"
+            variant="soft"
+            onClick={() => {
+              setDirectBillPrefill({});
+              setDirectBillModalOpen(true);
+            }}
+            className="h-7.5 text-[11.5px] gap-1.5 font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/35 shadow-2xs"
+            title="Create direct bill for un-inventoried items or manual sale"
+          >
+            <Zap className="size-3.5 text-amber-600 dark:text-amber-400" />
+            <span>⚡ Direct Bill (Manual)</span>
+          </Button>
+
           <Button
             size="sm"
             variant="secondary"
@@ -1014,14 +1037,26 @@ function POS() {
                 return (
                   <button
                     key={p.id}
-                    disabled={stock <= 0}
                     onClick={() => {
+                      if (stock <= 0) {
+                        setDirectBillPrefill({
+                          name: p.name,
+                          price: p.sellingPrice,
+                          gst: p.gst,
+                        });
+                        setDirectBillModalOpen(true);
+                        return;
+                      }
                       addProduct(p.id);
                       if (isFastBillMode) {
                         queryInputRef.current?.focus();
                       }
                     }}
-                    className="glass-strong rounded-xl border border-border/80 p-3 text-left transition-all hover:border-primary/50 hover:shadow-xs disabled:opacity-40 cursor-pointer flex flex-col justify-between bg-white/70"
+                    className={`glass-strong rounded-xl border p-3 text-left transition-all cursor-pointer flex flex-col justify-between bg-white/70 group ${
+                      stock <= 0
+                        ? "border-amber-500/40 hover:border-amber-500 hover:bg-amber-50/50"
+                        : "border-border/80 hover:border-primary/50 hover:shadow-xs"
+                    }`}
                   >
                     <div>
                       <div className="flex items-start justify-between gap-1.5">
@@ -1051,8 +1086,23 @@ function POS() {
                 );
               })}
               {results.length === 0 ? (
-                <div className="sm:col-span-3 py-6">
-                  <Empty text={`No product matches "${query}". Try searching by model, brand, or barcode.`} />
+                <div className="sm:col-span-3 py-6 text-center space-y-2">
+                  <Empty text={`No product matches "${query}".`} />
+                  {query.trim() && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="soft"
+                      onClick={() => {
+                        setDirectBillPrefill({ name: query.trim() });
+                        setDirectBillModalOpen(true);
+                      }}
+                      className="text-xs gap-1.5 bg-amber-500/15 border-amber-500/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/25"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-600" />
+                      ⚡ Add &quot;{query.trim()}&quot; to Direct Bill (Manual)
+                    </Button>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1183,15 +1233,30 @@ function POS() {
                 <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                   Bill Items ({items.length})
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setCustomAmountModalOpen(true)}
-                  className="text-[10.5px] font-bold text-primary hover:text-primary/80 flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/15 px-2 py-0.5 rounded-lg border border-primary/20 transition-all shadow-2xs"
-                  title="Add extra charge, accessory, service charge or custom amount"
-                >
-                  <Plus className="size-3" />
-                  <span>+ Custom Amount / Extra</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDirectBillPrefill({});
+                      setDirectBillModalOpen(true);
+                    }}
+                    className="text-[10px] font-bold text-amber-700 dark:text-amber-300 hover:text-amber-800 flex items-center gap-1 cursor-pointer bg-amber-500/15 hover:bg-amber-500/25 px-2 py-0.5 rounded-lg border border-amber-500/30 transition-all shadow-2xs"
+                    title="Directly add items that are not in inventory to this bill"
+                  >
+                    <Zap className="size-3 text-amber-600" />
+                    <span>⚡ + Manual Item</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCustomAmountModalOpen(true)}
+                    className="text-[10px] font-bold text-primary hover:text-primary/80 flex items-center gap-1 cursor-pointer bg-primary/10 hover:bg-primary/15 px-2 py-0.5 rounded-lg border border-primary/20 transition-all shadow-2xs"
+                    title="Add extra charge, accessory, service charge or custom amount"
+                  >
+                    <Plus className="size-3" />
+                    <span>+ Extra</span>
+                  </button>
+                </div>
               </div>
 
               {items.length === 0 ? (
@@ -1209,7 +1274,19 @@ function POS() {
                       <div key={idx} className="rounded-xl border border-border/80 bg-muted/15 p-2.5 text-[12px] space-y-1.5">
                         <div className="flex items-start justify-between gap-1.5">
                           <div className="min-w-0">
-                            <span className="font-semibold text-foreground truncate block text-[12.5px]">{i.name}</span>
+                            <div className="flex items-center gap-1.5">
+                              {i.isManual && (
+                                <span className="inline-block text-[9px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30 shrink-0">
+                                  ⚡ MANUAL
+                                </span>
+                              )}
+                              <span className="font-semibold text-foreground truncate block text-[12.5px]">{i.name}</span>
+                            </div>
+                            {i.imei && !product?.tracked && (
+                              <div className="text-[10px] font-mono font-semibold text-primary mt-0.5">
+                                IMEI: {i.imei}
+                              </div>
+                            )}
                             {product?.tracked ? (
                               <Select
                                 value={i.unitId ?? ""}
@@ -1946,6 +2023,19 @@ function POS() {
           if (adjustPriceItemIndex !== null) {
             requestPriceOverride(adjustPriceItemIndex, newPrice);
           }
+        }}
+      />
+
+      {/* DIRECT BILL / MANUAL ITEM MODAL */}
+      <DirectManualBillModal
+        open={directBillModalOpen}
+        onClose={() => setDirectBillModalOpen(false)}
+        invoiceType={invoiceType}
+        initialItemName={directBillPrefill.name}
+        initialPrice={directBillPrefill.price}
+        initialGst={directBillPrefill.gst}
+        onAddManualItem={(item) => {
+          setItems((c) => [...c, item]);
         }}
       />
 

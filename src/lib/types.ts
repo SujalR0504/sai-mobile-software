@@ -683,6 +683,9 @@ export interface LineItem {
   gst: number;
   costPrice: number;
   warrantyMonths?: number;
+  isManual?: boolean;
+  bypassStock?: boolean;
+  category?: string;
   // Purchase 18-column ERP fields
   hsnSac?: string;
   unit?: string;

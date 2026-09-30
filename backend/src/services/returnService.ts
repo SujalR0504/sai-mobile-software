@@ -45,6 +45,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
     }
   }
 
+  const amount = input.items.reduce((sum, item) => sum + item.price * item.qty, 0);
   const returnId = uid("ret");
   const date = todayISO();
   const isDealerReturn = input.destination === "DEALER";

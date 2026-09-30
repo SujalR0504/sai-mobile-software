@@ -206,12 +206,23 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
         } else {
           const product = db.prepare("SELECT id, name, qty, tracked, purchase_price FROM products WHERE id = ?").get(item.productId) as any;
           if (!product) {
-            throw new Error(`Product ${item.productId} not found`);
+            const isManualItem =
+              (item as any).isManual ||
+              item.productId?.startsWith("custom_") ||
+              item.productId?.startsWith("manual_") ||
+              item.productId?.startsWith("direct_");
+            if (isManualItem) {
+              item.costPrice = item.costPrice ?? 0;
+            } else {
+              throw new Error(`Product ${item.productId} not found`);
+            }
+          } else {
+            const allowBypass = (item as any).isManual || (item as any).bypassStock;
+            if (!product.tracked && product.qty < item.qty && !allowBypass) {
+              throw new Error(`Insufficient stock for '${product.name}'. Available: ${product.qty}, requested: ${item.qty}`);
+            }
+            item.costPrice = item.costPrice ?? product.purchase_price;
           }
-          if (!product.tracked && product.qty < item.qty) {
-            throw new Error(`Insufficient stock for '${product.name}'. Available: ${product.qty}, requested: ${item.qty}`);
-          }
-          item.costPrice = product.purchase_price;
         }
       }
     }
@@ -302,18 +313,21 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
           decrementStockStmt.run(item.qty, item.productId);
         }
 
-        // Create Stock Movement Ledger entry
-        recordStockMovement(db, {
-          productId: item.productId,
-          unitId: item.unitId,
-          imei: item.imei,
-          movementType: "SALE",
-          quantity: -item.qty,
-          costPerUnit: item.costPrice,
-          referenceId: saleId,
-          notes: `Sold via POS Bill ${invoiceNo}`,
-          createdBy: input.user || "Cashier",
-        });
+        // Create Stock Movement Ledger entry if product exists in inventory
+        const productExists = db.prepare("SELECT id FROM products WHERE id = ?").get(item.productId);
+        if (productExists) {
+          recordStockMovement(db, {
+            productId: item.productId,
+            unitId: item.unitId,
+            imei: item.imei,
+            movementType: "SALE",
+            quantity: -item.qty,
+            costPerUnit: item.costPrice,
+            referenceId: saleId,
+            notes: `Sold via POS Bill ${invoiceNo}`,
+            createdBy: input.user || "Cashier",
+          });
+        }
       }
 
       // If EMI, create EMI receivable record only if financed amount > 0
