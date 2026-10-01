@@ -53,7 +53,7 @@ import type {
   OrderStatus,
 } from "./types";
 
-const STORAGE_KEY = "retail-erp-mobile-v1";
+const STORAGE_KEY = "retail-erp-mobile-v2";
 
 interface StoreValue {
   db: DB;
@@ -753,10 +753,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const wipeAllData = useCallback(() => {
+    const clean = seedDB();
+    setDb(clean);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+    } catch {}
+
     settingsApi
       .wipeAllData()
       .then((data) => {
-        if (data?.db) setDb(data.db);
+        if (data?.db) {
+          setDb(data.db);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data.db));
+          } catch {}
+        }
       })
       .catch(() => {});
   }, []);

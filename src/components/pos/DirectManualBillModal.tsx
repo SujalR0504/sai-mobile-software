@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { captureAndExtractImeis } from "@/lib/imeiOcrClient";
+import { cleanBarcodeImei, playScanBeep, useHardwareBarcodeScanner } from "@/lib/barcodeScannerHelper";
 
 export interface DirectManualBillModalProps {
   open: boolean;
@@ -129,6 +130,19 @@ export function DirectManualBillModal({
       ocrBusyRef.current = false;
     }
   };
+
+  // Hardware USB Barcode Scanner (TVS BS-C101 Star) listener
+  useHardwareBarcodeScanner({
+    enabled: open,
+    soundOnScan: true,
+    onScan: (scanned) => {
+      const cleaned = cleanBarcodeImei(scanned);
+      if (cleaned) {
+        setImei(cleaned);
+        setScannerOpen(false);
+      }
+    },
+  });
 
   // Camera scanner effect
   useEffect(() => {

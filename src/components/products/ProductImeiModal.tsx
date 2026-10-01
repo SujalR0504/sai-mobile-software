@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { captureAndExtractImeis } from "@/lib/imeiOcrClient";
+import { cleanBarcodeImei, playScanBeep, useHardwareBarcodeScanner } from "@/lib/barcodeScannerHelper";
 
 export interface ProductImeiModalProps {
   open: boolean;
@@ -77,7 +78,12 @@ export function ProductImeiModal({
       setShowBulkPaste(false);
       setPurchasePrice(product.purchasePrice || 0);
       setFeedback(null);
-      setCameraActive(true); // Open live camera scanner
+      // Scanner gun is default primary; camera can be toggled if needed
+      setCameraActive(false);
+      // Auto-focus the input so USB scanner or manual entry is immediately ready
+      setTimeout(() => {
+        manualInputRef.current?.focus();
+      }, 100);
     } else {
       stopCamera();
       setCameraActive(false);
@@ -88,34 +94,10 @@ export function ProductImeiModal({
     }
   }, [open, product]);
 
-  // Audio feedback tone
-  const playBeep = useCallback((success: boolean = true) => {
-    try {
-      const AudioContextClass =
-        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) return;
-      const audioCtx = new AudioContextClass();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(success ? 880 : 320, audioCtx.currentTime);
-      gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.16);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.16);
-    } catch {
-      // Audio restricted without user interaction
-    }
-  }, []);
-
   // Validate and automatically register an IMEI
   const handleProcessImei = useCallback(
     (rawVal: string, source: "ocr" | "barcode" | "manual" = "manual"): boolean => {
-      const cleaned = rawVal.trim().replace(/[\s\-_]/g, "");
+      const cleaned = cleanBarcodeImei(rawVal);
       if (!cleaned) return false;
 
       // Filter out non-IMEI barcodes (e.g. 13-digit EAN-13 barcodes like 6942675408009)
@@ -129,7 +111,7 @@ export function ProductImeiModal({
           type: "error",
           text: `Code '${cleaned}' is too short for an IMEI/Serial (min 8 characters).`,
         });
-        playBeep(false);
+        playScanBeep(false);
         return false;
       }
 
@@ -139,7 +121,7 @@ export function ProductImeiModal({
           type: "error",
           text: `IMEI ${cleaned} is ALREADY in this scan list!`,
         });
-        playBeep(false);
+        playScanBeep(false);
         return false;
       }
 
@@ -152,7 +134,7 @@ export function ProductImeiModal({
           type: "error",
           text: `Duplicate: IMEI ${cleaned} already exists in inventory (Status: ${existingInDb.status}).`,
         });
-        playBeep(false);
+        playScanBeep(false);
         return false;
       }
 
@@ -163,21 +145,35 @@ export function ProductImeiModal({
         return next;
       });
 
-      playBeep(true);
+      playScanBeep(true);
       setFeedback({
         type: "success",
-        text: source === "ocr"
-          ? `✓ Scanned Sticker Text: IMEI ${cleaned} (Total: ${imeis.length + 1})`
-          : `✓ Scanned: ${cleaned} (Total: ${imeis.length + 1})`,
+        text:
+          source === "ocr"
+            ? `✓ Scanned Sticker Text: IMEI ${cleaned} (Total: ${imeis.length + 1})`
+            : source === "barcode"
+            ? `✓ TVS Scanner Machine Scanned: IMEI ${cleaned} (Total: ${imeis.length + 1})`
+            : `✓ Added: ${cleaned} (Total: ${imeis.length + 1})`,
       });
 
-      if (source === "manual") {
-        setManualInput("");
-      }
+      setManualInput("");
+      // Keep input focused for consecutive scans
+      setTimeout(() => {
+        manualInputRef.current?.focus();
+      }, 50);
       return true;
     },
-    [imeis, existingUnits, playBeep]
+    [imeis, existingUnits]
   );
+
+  // Global window listener for TVS BS-C101 Star and any USB Barcode Scanner gun
+  useHardwareBarcodeScanner({
+    enabled: open,
+    soundOnScan: false, // handleProcessImei handles beep
+    onScan: (scannedCode) => {
+      handleProcessImei(scannedCode, "barcode");
+    },
+  });
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
@@ -365,7 +361,7 @@ export function ProductImeiModal({
     if (e.key === "Enter") {
       e.preventDefault();
       if (manualInput.trim()) {
-        handleProcessImei(manualInput.trim(), "manual");
+        handleProcessImei(manualInput.trim(), "barcode");
       }
     }
   };
@@ -373,7 +369,7 @@ export function ProductImeiModal({
   const handleManualAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualInput.trim()) {
-      handleProcessImei(manualInput.trim(), "manual");
+      handleProcessImei(manualInput.trim(), "barcode");
     }
   };
 
@@ -506,17 +502,86 @@ export function ProductImeiModal({
           </div>
         )}
 
-        {/* Camera Live Scanner Section */}
+        {/* TVS BS-C101 / USB Barcode Scanner Gun Section (PRIMARY) */}
+        <div className="p-3.5 rounded-2xl border-2 border-emerald-500/40 bg-emerald-500/5 dark:bg-emerald-950/20 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Barcode className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-foreground flex items-center gap-2">
+                  <span>TVS / USB Barcode Scanner Gun</span>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping mr-1.5" />
+                    LIVE SCANNER ACTIVE
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  मशीन (TVS BS-C101) से मोबाइल बॉक्स का बारकोड स्कैन करें — बिना क्लिक किए तुरंत स्कैन होगा
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBulkPaste(!showBulkPaste)}
+                className="text-primary hover:underline text-xs font-medium"
+              >
+                {showBulkPaste ? "Hide Bulk Paste" : "Bulk Paste"}
+              </button>
+            </div>
+          </div>
+
+          {/* Input & Add Button */}
+          <form onSubmit={handleManualAddSubmit} className="flex gap-2">
+            <div className="relative flex-1">
+              <Input
+                ref={manualInputRef}
+                value={manualInput}
+                onChange={(e) => setManualInput(e.target.value)}
+                onKeyDown={handleGunKeyDown}
+                placeholder="TVS स्कैनर का बटन दबाकर बारकोड स्कैन करें (या 15-अंकों का IMEI टाइप करें)..."
+                className="font-mono text-[13px] h-10 pr-10 border-emerald-500/30 focus:border-emerald-500 focus:ring-emerald-500/20"
+                autoFocus
+              />
+              {manualInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualInput("");
+                    manualInputRef.current?.focus();
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!manualInput.trim()}
+              className="h-10 px-4 text-xs font-semibold gap-1.5 shrink-0 bg-emerald-600 hover:bg-emerald-500 text-white"
+            >
+              <Plus className="w-4 h-4" />
+              Add IMEI
+            </Button>
+          </form>
+        </div>
+
+        {/* Camera Live Scanner Section (OPTIONAL / STICKER TEXT OCR) */}
         <div className="rounded-xl border border-border/80 overflow-hidden bg-slate-950 text-white shadow-sm">
           {/* Scanner Header Controls */}
           <div className="p-2.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
               <FileText className="w-4 h-4 text-emerald-400" />
-              <span>Box Sticker Text Scanner (Reads IMEI1 / IMEI2 Numbers)</span>
+              <span>Camera Sticker OCR (Reads Printed IMEI Numbers)</span>
               {cameraActive && (
                 <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-normal bg-emerald-950/80 px-2 py-0.5 rounded-full border border-emerald-800/60">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Sticker OCR Active
+                  Camera Active
                 </span>
               )}
             </div>
@@ -565,14 +630,14 @@ export function ProductImeiModal({
               <Button
                 type="button"
                 size="sm"
-                variant={cameraActive ? "danger" : "primary"}
+                variant={cameraActive ? "danger" : "outline"}
                 onClick={() => setCameraActive(!cameraActive)}
-                className="h-7 text-[11px] gap-1 px-2.5"
+                className={`h-7 text-[11px] gap-1 px-2.5 ${!cameraActive ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700" : ""}`}
               >
                 {cameraActive ? (
                   <>
                     <CameraOff className="w-3.5 h-3.5" />
-                    Off
+                    Turn Off Camera
                   </>
                 ) : (
                   <>
@@ -586,7 +651,7 @@ export function ProductImeiModal({
 
           {/* Camera Viewport */}
           {cameraActive ? (
-            <div className="relative aspect-video max-h-[260px] w-full overflow-hidden flex items-center justify-center bg-black">
+            <div className="relative aspect-video max-h-[240px] w-full overflow-hidden flex items-center justify-center bg-black">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -597,7 +662,7 @@ export function ProductImeiModal({
 
               {/* Viewfinder Target Reticle Overlay */}
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="relative w-72 h-32 sm:w-96 sm:h-36 border-2 border-emerald-400 rounded-xl shadow-[0_0_25px_rgba(52,211,153,0.4)] flex flex-col items-center justify-between p-2">
+                <div className="relative w-72 h-28 sm:w-96 sm:h-32 border-2 border-emerald-400 rounded-xl shadow-[0_0_25px_rgba(52,211,153,0.4)] flex flex-col items-center justify-between p-2">
                   <div className="w-full flex justify-between">
                     <div className="w-4 h-4 border-t-2 border-l-2 border-emerald-400" />
                     <div className="w-4 h-4 border-t-2 border-r-2 border-emerald-400" />
@@ -619,81 +684,16 @@ export function ProductImeiModal({
 
               <div className="absolute bottom-2 left-3 text-[10.5px] text-slate-300 bg-slate-900/85 px-2.5 py-0.5 rounded-md border border-slate-800 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                Hold box sticker in frame — reads printed numbers automatically (No barcode needed)
+                Hold box sticker in frame — reads printed numbers automatically
               </div>
             </div>
           ) : (
-            <div className="p-6 text-center space-y-2 bg-slate-950/60">
-              <Camera className="w-8 h-8 text-slate-500 mx-auto" />
-              <div className="text-[13px] font-medium text-slate-300">
-                {cameraPermissionDenied
-                  ? "Camera permission was denied in browser."
-                  : cameraError || "Camera scanner is paused."}
-              </div>
-              <div className="text-[11.5px] text-slate-500 max-w-sm mx-auto">
-                Click &quot;Turn On Camera&quot; to read the printed IMEI1 / IMEI2 numbers from the box sticker, or use USB barcode scanner below.
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="primary"
-                onClick={() => setCameraActive(true)}
-                className="mt-2 text-xs"
-              >
-                <Camera className="w-3.5 h-3.5 mr-1" />
-                Start Camera Scanner
-              </Button>
+            <div className="p-3 text-center text-[11px] text-slate-400 bg-slate-900/40 flex items-center justify-center gap-2">
+              <Camera className="w-4 h-4 text-slate-500" />
+              <span>Camera scanner paused. Using TVS USB Scanner Gun above (Click &quot;Turn On Camera&quot; if you want to scan box with camera).</span>
             </div>
           )}
         </div>
-
-        {/* USB Barcode Gun / Manual IMEI Input */}
-        <form onSubmit={handleManualAddSubmit} className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11.5px] font-semibold text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <Barcode className="w-4 h-4 text-primary" />
-              Scan with Barcode Gun or Type IMEI:
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowBulkPaste(!showBulkPaste)}
-              className="text-primary hover:underline text-xs"
-            >
-              {showBulkPaste ? "Hide Bulk Paste Textarea" : "Show Bulk Paste / Raw Text"}
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Input
-                ref={manualInputRef}
-                value={manualInput}
-                onChange={(e) => setManualInput(e.target.value)}
-                onKeyDown={handleGunKeyDown}
-                placeholder="Point barcode scanner gun here or type 15-digit IMEI..."
-                className="font-mono text-[13px] h-10 pr-10"
-              />
-              {manualInput && (
-                <button
-                  type="button"
-                  onClick={() => setManualInput("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={!manualInput.trim()}
-              className="h-10 px-4 text-xs font-semibold gap-1.5 shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              Add IMEI
-            </Button>
-          </div>
-        </form>
 
         {/* Bulk Paste Textarea (Toggleable) */}
         {showBulkPaste && (

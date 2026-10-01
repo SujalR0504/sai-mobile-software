@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Input, Modal } from "./ui";
 import { Html5Qrcode } from "html5-qrcode";
-import { Camera, FileText, Loader2, RefreshCw } from "lucide-react";
+import { Camera, FileText, Loader2, RefreshCw, Barcode } from "lucide-react";
 import { captureAndExtractImeis } from "@/lib/imeiOcrClient";
+import { cleanBarcodeImei, playScanBeep, useHardwareBarcodeScanner } from "@/lib/barcodeScannerHelper";
 
 export interface ImeiScannerModalProps {
   open: boolean;
@@ -83,9 +84,10 @@ export function ImeiScannerModal({
   };
 
   const validateAndAddImei = (rawImei: string): boolean => {
-    const trimmed = rawImei.trim();
+    const trimmed = cleanBarcodeImei(rawImei);
     if (!trimmed) {
       setFeedbackMsg({ type: "error", text: "IMEI cannot be empty." });
+      playScanBeep(false);
       return false;
     }
 
@@ -94,6 +96,7 @@ export function ImeiScannerModal({
         type: "error",
         text: `Invalid IMEI '${trimmed}'. Standard mobile phone IMEIs contain 14–16 digits.`,
       });
+      playScanBeep(false);
       return false;
     }
 
@@ -103,6 +106,7 @@ export function ImeiScannerModal({
         type: "error",
         text: `IMEI ${trimmed} is already entered in this purchase bill.`,
       });
+      playScanBeep(false);
       return false;
     }
 
@@ -115,6 +119,7 @@ export function ImeiScannerModal({
         type: "error",
         text: "IMEI already exists in inventory.",
       });
+      playScanBeep(false);
       return false;
     }
 
@@ -132,6 +137,7 @@ export function ImeiScannerModal({
       const res = onAddImei(trimmed);
       if (typeof res === "object" && res.error) {
         setFeedbackMsg({ type: "error", text: res.error });
+        playScanBeep(false);
         return false;
       }
     }
@@ -142,15 +148,23 @@ export function ImeiScannerModal({
       onSave(nextList);
     }
 
-    playBeep();
+    playScanBeep(true);
     setFeedbackMsg({
       type: "success",
-      text: `✓ Scanned: ${trimmed} (${nextList.length}/${requiredCount})`,
+      text: `✓ Scanned IMEI: ${trimmed} (${nextList.length}/${requiredCount})`,
     });
     setManualCode("");
-
     return true;
   };
+
+  // Hardware TVS / USB barcode scanner listener
+  useHardwareBarcodeScanner({
+    enabled: open && !isComplete,
+    soundOnScan: false, // validateAndAddImei plays sound
+    onScan: (scannedCode) => {
+      validateAndAddImei(scannedCode);
+    },
+  });
 
   const handleRemove = (imei: string) => {
     const nextList = capturedImeis.filter((im) => im !== imei);
@@ -563,13 +577,22 @@ export function ImeiScannerModal({
           )}
         </div>
 
+        {/* TVS / USB Scanner Gun Status */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+          <span className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
+            <Barcode className="w-4 h-4" />
+            TVS / USB Barcode Scanner Gun Ready (Point & Pull Trigger)
+          </span>
+          <span className="text-[11px] text-muted-foreground">Auto-detects Code 128 / IMEI</span>
+        </div>
+
         {/* Manual IMEI Input & Hardware Scanner Field */}
         <form onSubmit={handleManualSubmit} className="flex gap-2 items-center">
           <Input
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
-            placeholder="Manual entry or USB barcode scanner for 14–16 digit IMEI..."
-            className="flex-1 font-mono text-[12px] h-9"
+            placeholder="TVS स्कैनर से बारकोड स्कैन करें या IMEI टाइप करें..."
+            className="flex-1 font-mono text-[12px] h-9 border-emerald-500/30 focus:border-emerald-500"
             disabled={isComplete}
             autoFocus
           />

@@ -15,6 +15,7 @@ import { stockOf, useStore } from "@/lib/store";
 import { inr, inr2, maskImei } from "@/lib/format";
 import { CATEGORIES, PAYMENT_MODES, type InterestType, type LineItem, type PaymentMode, type PaymentSplit, type Sale } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { cleanBarcodeImei, playScanBeep } from "@/lib/barcodeScannerHelper";
 import { BarcodeScannerModal } from "@/components/BarcodeScannerModal";
 import { AdminPinModal } from "@/components/AdminPinModal";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
@@ -463,8 +464,11 @@ function POS() {
 
   const handleScanDetected = async (code: string) => {
     setScannerOpen(false);
-    const trimmed = code.trim();
+    const trimmed = cleanBarcodeImei(code);
     if (!trimmed) return;
+
+    // Auto-switch to products view so user immediately sees the added product
+    setSaleStep("products");
 
     setScanStatus(`Scanning: ${trimmed}...`);
     setTimeout(() => setScanStatus(null), 3500);
@@ -494,6 +498,7 @@ function POS() {
             warrantyMonths: prod.warrantyMonths,
           },
         ]);
+        playScanBeep(true);
         setScanStatus(`Added: ${prod.name} (${trimmed})`);
         queryInputRef.current?.focus();
         return;
@@ -506,6 +511,7 @@ function POS() {
     );
     if (prodMatch) {
       addProduct(prodMatch.id);
+      playScanBeep(true);
       setScanStatus(`Added: ${prodMatch.name}`);
       queryInputRef.current?.focus();
       return;
@@ -520,6 +526,7 @@ function POS() {
           if (data.type === "IMEI" && data.unit && data.product) {
             if (items.some((i) => i.unitId === data.unit.id)) {
               setScanStatus(`IMEI ${trimmed} already in bill`);
+              playScanBeep(false);
               return;
             }
             setItems((c) => [
@@ -536,11 +543,13 @@ function POS() {
                 warrantyMonths: data.product.warranty_months || data.product.warrantyMonths,
               },
             ]);
+            playScanBeep(true);
             setScanStatus(`Added: ${data.product.name} (${trimmed})`);
             queryInputRef.current?.focus();
             return;
           } else if (data.product) {
             addProduct(data.product.id);
+            playScanBeep(true);
             setScanStatus(`Added: ${data.product.name}`);
             queryInputRef.current?.focus();
             return;
@@ -552,6 +561,7 @@ function POS() {
     }
 
     // Fallback: put in search query box
+    playScanBeep(false);
     setQuery(trimmed);
     queryInputRef.current?.focus();
   };

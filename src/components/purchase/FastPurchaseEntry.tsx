@@ -8,6 +8,7 @@ import { QuickAddDealerModal } from "./QuickAddDealerModal";
 import { FastAddProductModal } from "./FastAddProductModal";
 import { BulkImeiModal } from "./BulkImeiModal";
 import { QuickProductModal } from "../QuickProductModal";
+import { cleanBarcodeImei, playScanBeep } from "@/lib/barcodeScannerHelper";
 
 interface FastPurchaseEntryProps {
   onSavedPurchase: (purchase: Purchase) => void;
@@ -411,11 +412,13 @@ export function FastPurchaseEntry({
 
   // IMEI manual inline add
   const handleAddInlineImei = (productId: string) => {
-    const text = (inlineImeiInputs[productId] || "").trim();
+    const raw = inlineImeiInputs[productId] || "";
+    const text = cleanBarcodeImei(raw);
     if (!text) return;
 
     if (!/^\d{14,16}$/.test(text)) {
       setErrorMessage(`Invalid IMEI '${text}'. Standard mobile IMEIs contain 14–16 digits.`);
+      playScanBeep(false);
       return;
     }
 
@@ -423,6 +426,7 @@ export function FastPurchaseEntry({
     const allBillImeis = Object.values(imeisByProduct).flat();
     if (allBillImeis.includes(text)) {
       setErrorMessage(`IMEI ${text} is already entered in this purchase.`);
+      playScanBeep(false);
       return;
     }
 
@@ -430,6 +434,7 @@ export function FastPurchaseEntry({
     const existingUnit = db.units.find((u) => u.imei1 === text || u.imei2 === text);
     if (existingUnit) {
       setErrorMessage(`IMEI ${text} already exists in store inventory stock.`);
+      playScanBeep(false);
       return;
     }
 
@@ -437,6 +442,7 @@ export function FastPurchaseEntry({
     const item = items.find((i) => i.productId === productId);
     if (item && currentList.length >= item.qty) {
       setErrorMessage(`Required quantity of ${item.qty} IMEI(s) already reached.`);
+      playScanBeep(false);
       return;
     }
 
@@ -445,6 +451,7 @@ export function FastPurchaseEntry({
       [productId]: [...currentList, text],
     }));
 
+    playScanBeep(true);
     setInlineImeiInputs((prev) => ({ ...prev, [productId]: "" }));
     setErrorMessage("");
   };

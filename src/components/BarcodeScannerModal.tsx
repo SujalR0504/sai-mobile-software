@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Button, Field, Input, Modal, Badge } from "./ui";
-import { Camera, CameraOff, Scan, FileText, Loader2, RefreshCw } from "lucide-react";
+import { Camera, CameraOff, Scan, FileText, Loader2, RefreshCw, Barcode } from "lucide-react";
 import { captureAndExtractImeis } from "@/lib/imeiOcrClient";
+import { cleanBarcodeImei, playScanBeep, useHardwareBarcodeScanner } from "@/lib/barcodeScannerHelper";
 
 interface BarcodeScannerModalProps {
   open: boolean;
@@ -30,28 +31,33 @@ export function BarcodeScannerModal({ open, onClose, onDetected }: BarcodeScanne
 
   const handleDetectedCode = useCallback(
     (code: string, source: "ocr" | "barcode" | "manual" = "manual") => {
-      const cleaned = code.trim().replace(/[\s\-_]/g, "");
+      const cleaned = cleanBarcodeImei(code);
       if (!cleaned) return;
-
-      // Filter out non-IMEI barcodes (e.g. 13-digit EAN product codes)
-      if (source === "barcode" && cleaned.length === 13) {
-        return;
-      }
 
       const now = Date.now();
       if (
         lastScannedTimeRef.current.code === cleaned &&
-        now - lastScannedTimeRef.current.time < 2000
+        now - lastScannedTimeRef.current.time < 1500
       ) {
         return;
       }
 
       lastScannedTimeRef.current = { code: cleaned, time: now };
       setLastScanned(cleaned);
+      playScanBeep(true);
       onDetected(cleaned);
     },
     [onDetected]
   );
+
+  // Global listener for TVS BS-C101 Star / USB barcode gun
+  useHardwareBarcodeScanner({
+    enabled: open,
+    soundOnScan: false,
+    onScan: (scanned) => {
+      handleDetectedCode(scanned, "barcode");
+    },
+  });
 
   // Manual snap OCR
   const handleSnapOcr = async () => {
@@ -271,19 +277,34 @@ export function BarcodeScannerModal({ open, onClose, onDetected }: BarcodeScanne
           </div>
         )}
 
-        {/* Hardware or Manual Barcode Input */}
+        {/* Hardware TVS / USB Barcode Scanner Status & Input */}
+        <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Barcode className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div>
+              <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <span>TVS / USB Barcode Scanner Ready</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                TVS मशीन का बटन दबाकर बॉक्स का बारकोड स्कैन करें (बिना क्लिक किए काम करेगा)
+              </p>
+            </div>
+          </div>
+        </div>
+
         <form onSubmit={handleManualSubmit} className="flex gap-2">
           <Field label="Hardware Scanner / Manual Input" className="flex-1">
             <Input
               autoFocus
               value={manualCode}
               onChange={(e) => setManualCode(e.target.value)}
-              placeholder="Scan with USB barcode scanner or type 15-digit IMEI..."
-              className="font-mono text-[13px]"
+              placeholder="TVS स्कैनर से बारकोड स्कैन करें या 15-digit IMEI टाइप करें..."
+              className="font-mono text-[13px] border-emerald-500/30 focus:border-emerald-500"
             />
           </Field>
           <div className="flex flex-col justify-end">
-            <Button type="submit" size="md">
+            <Button type="submit" size="md" className="bg-emerald-600 hover:bg-emerald-500 text-white">
               Submit
             </Button>
           </div>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Badge, Button, Modal } from "../ui";
+import { cleanBarcodeImei } from "@/lib/barcodeScannerHelper";
 
 interface BulkImeiModalProps {
   open: boolean;
@@ -29,10 +30,10 @@ export function BulkImeiModal({
 
   const handleParseAndApply = () => {
     setErrorMsg("");
-    // Split by newlines, commas, tabs, spaces
+    // Split by newlines, commas, semicolons or spaces and clean
     const rawTokens = text
-      .split(/[\r\n,;\t ]+/)
-      .map((t) => t.trim())
+      .split(/[\r\n,;]+/)
+      .map((t) => cleanBarcodeImei(t))
       .filter(Boolean);
 
     if (rawTokens.length === 0) {
