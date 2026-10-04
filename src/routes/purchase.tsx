@@ -254,25 +254,27 @@ export function PurchasePage() {
         }
       />
 
-      {/* KPI Stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total Inward Bills" value={String(db.purchases.length)} tone="info" />
-        <Stat
-          label="Total Purchases"
-          value={inr(db.purchases.reduce((sum, p) => sum + p.total, 0))}
-          tone="neutral"
-        />
-        <Stat
-          label="Paid to Dealers"
-          value={inr(db.purchases.reduce((sum, p) => sum + p.paid, 0))}
-          tone="success"
-        />
-        <Stat
-          label="Outstanding Payable"
-          value={inr(totalOutstandingToDealers)}
-          tone={totalOutstandingToDealers > 0 ? "danger" : "success"}
-        />
-      </div>
+      {/* KPI Stats (shown on Bills tab) */}
+      {activeTab === "BILLS" && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Total Inward Bills" value={String(db.purchases.length)} tone="info" />
+          <Stat
+            label="Total Purchases"
+            value={inr(db.purchases.reduce((sum, p) => sum + p.total, 0))}
+            tone="neutral"
+          />
+          <Stat
+            label="Paid to Dealers"
+            value={inr(db.purchases.reduce((sum, p) => sum + p.paid, 0))}
+            tone="success"
+          />
+          <Stat
+            label="Outstanding Payable"
+            value={inr(totalOutstandingToDealers)}
+            tone={totalOutstandingToDealers > 0 ? "danger" : "success"}
+          />
+        </div>
+      )}
 
       {/* TAB 1: NEW PURCHASE - FAST 3-STEP DEALER BILL */}
       {activeTab === "NEW_PURCHASE" && (

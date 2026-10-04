@@ -241,13 +241,6 @@ export function FastAddProductModal({
           qty: 0,
         });
 
-        // Also call backend product creation in background for persistence
-        fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newProd),
-        }).catch(() => {});
-
         targetProduct = newProd;
       } catch (err: any) {
         setErrorMsg(err.message || "Failed to create product");

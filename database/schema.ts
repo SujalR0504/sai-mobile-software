@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { seedDB } from "./seed";
+import { seedDB, demoDB } from "./seed";
 import type { DB } from "../../lib/types";
 import { seedMobileProductMaster } from "./mobileProductMaster";
 
@@ -1965,9 +1965,8 @@ export function seedIfEmpty(db: DatabaseSync): void {
     // Ignore if table not yet created
   }
 
-  const prodCheck = db.prepare("SELECT COUNT(*) as cnt FROM products").get() as { cnt: number };
-  const empCheck = db.prepare("SELECT COUNT(*) as cnt FROM employees").get() as { cnt: number };
-  if (!prodCheck || prodCheck.cnt === 0 || !empCheck || empCheck.cnt === 0) {
+  const shopCheck = db.prepare("SELECT COUNT(*) as cnt FROM settings").get() as { cnt: number };
+  if (!shopCheck || shopCheck.cnt === 0) {
     const initial = seedDB();
     populateDatabase(db, initial);
   }
@@ -2017,10 +2016,12 @@ export function wipeAllData(db: DatabaseSync): void {
     DELETE FROM product_variants;
     DELETE FROM products;
     DELETE FROM customers WHERE id != 'c0';
-    DELETE FROM suppliers WHERE id LIKE 'sup_test_%' OR id LIKE 'sup_nqcf%' OR id LIKE 'dealer_pos%';
+    UPDATE customers SET name = 'Cash / Walk-in Customer', phone = '9999999999', mobile = '9999999999', address = NULL WHERE id = 'c0';
+    DELETE FROM suppliers;
     DELETE FROM payment_account_transactions;
     DELETE FROM payment_accounts WHERE id = 'acc_cash_test';
     UPDATE payment_accounts SET opening_balance = 0, current_balance = 0;
+    UPDATE settings SET opening_cash = 0;
     CREATE TABLE IF NOT EXISTS app_flags (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -2081,7 +2082,7 @@ export function resetDatabase(db: DatabaseSync): void {
     DELETE FROM businesses;
     PRAGMA foreign_keys = ON;
   `);
-  const initial = seedDB();
+  const initial = demoDB();
   populateDatabase(db, initial);
 }
 
@@ -2508,7 +2509,7 @@ export function populateDatabase(db: DatabaseSync, data: DB): void {
     INSERT OR REPLACE INTO return_items (id, return_id, product_id, unit_id, name, qty, price, gst, cost_price)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  for (const r of data.returns) {
+  for (const r of data.returns || []) {
     insertReturn.run(
       r.id,
       bId,

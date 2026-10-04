@@ -212,11 +212,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addSupplier: StoreValue["addSupplier"] = useCallback((s) => {
-    const created: Supplier = { ...s, id: uid("sup") };
+    const created: Supplier = { ...s, id: (s as any).id || uid("sup") };
     setDb((d) => ({ ...d, suppliers: [...d.suppliers, created] }));
 
     dealersApi
-      .addDealer(s)
+      .addDealer(created as any)
       .then((saved) => {
         if (saved) {
           setDb((d) => ({
@@ -225,17 +225,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }));
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("Error adding supplier to backend:", err));
 
     return created;
   }, []);
 
   const addProduct: StoreValue["addProduct"] = useCallback((p) => {
-    const created: Product = { ...p, id: uid("p") };
+    const created: Product = { ...p, id: (p as any).id || uid("p") };
     setDb((d) => ({ ...d, products: [...d.products, created] }));
 
     productsApi
-      .addProduct(p)
+      .addProduct(created as any)
       .then((saved) => {
         if (saved) {
           setDb((d) => ({
@@ -244,7 +244,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }));
         }
       })
-      .catch(() => {});
+      .catch((err) => console.error("Error adding product to backend:", err));
 
     return created;
   }, []);

@@ -34,8 +34,8 @@ export function updateCustomer(db: DatabaseSync, id: string, patch: Partial<Cust
   return updated;
 }
 
-export function addSupplier(db: DatabaseSync, s: Omit<Supplier, "id">): Supplier {
-  const id = uid("sup");
+export function addSupplier(db: DatabaseSync, s: Omit<Supplier, "id"> & { id?: string }): Supplier {
+  const id = s.id || uid("sup");
   const stmt = db.prepare(`
     INSERT INTO suppliers (id, name, company, phone, mobile, email, gstin, address, city, state, state_code, contact_person)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

@@ -8,6 +8,7 @@ import { uid } from "../../../shared/utils/format";
 import { extractInvoiceData } from "../services/invoiceExtractionService";
 import {
   deletePurchasePayment,
+  generatePurchaseInvoiceNo,
   getPurchaseById,
   getPurchasePayments,
   recordPurchase,
@@ -16,6 +17,11 @@ import {
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function purchaseRoutes({ request, url, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // Next Invoice No
+  if (pathname === "/api/purchases/next-invoice-no" && method === "GET") {
+    return jsonResponse({ invoiceNo: generatePurchaseInvoiceNo(db) });
+  }
+
   // Check Duplicate Invoice
   if (pathname === "/api/purchases/check-duplicate" && method === "GET") {
     const dealerId = url.searchParams.get("dealerId") || url.searchParams.get("supplierId");

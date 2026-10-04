@@ -8,6 +8,7 @@ import { uid } from "../../../lib/format";
 import { extractInvoiceData } from "../../services/invoiceExtractionService";
 import {
   deletePurchasePayment,
+  generatePurchaseInvoiceNo,
   getPurchaseById,
   getPurchasePayments,
   recordPurchase,
@@ -16,6 +17,11 @@ import {
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function purchaseRoutes({ request, pathname, method, db }: RouteContext): Promise<Response | null> {
+  // Next Invoice No
+  if (pathname === "/api/purchases/next-invoice-no" && method === "GET") {
+    return jsonResponse({ invoiceNo: generatePurchaseInvoiceNo(db) });
+  }
+
   // Invoice Extraction
   if (pathname === "/api/purchases/extract-invoice" && method === "POST") {
     const body = await request.json();

@@ -12,7 +12,8 @@ async function runTests() {
   console.assert(healthData.status === "ok", "Health data should be ok");
   console.log("✓ Health check passed");
 
-  // 2. Hydration DB
+  // 2. Hydration DB (load demo test fixtures for regression testing)
+  await handleApiRequest(new Request("http://localhost:5173/api/reset", { method: "POST" }));
   const dbReq = new Request("http://localhost:5173/api/db");
   const dbRes = await handleApiRequest(dbReq);
   const dbData = await dbRes.json();
