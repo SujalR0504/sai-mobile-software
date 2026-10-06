@@ -57,11 +57,22 @@ function CustomersPage() {
 
   const customerSales = useMemo(() => {
     if (!billsCustomer) return [];
+    const custPhone = billsCustomer.phone || billsCustomer.mobile;
     return (db.sales || [])
-      .filter((s) => s.customerId === billsCustomer.id && !s.quotation)
+      .filter((s) => {
+        if (s.quotation) return false;
+        if (s.customerId === billsCustomer.id) return true;
+        if (custPhone && custPhone !== "9999999999") {
+          const matchedCust = (db.customers || []).find((c) => c.id === s.customerId);
+          if (matchedCust && (matchedCust.phone === custPhone || matchedCust.mobile === custPhone)) {
+            return true;
+          }
+        }
+        return false;
+      })
       .slice()
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [db.sales, billsCustomer]);
+  }, [db.sales, billsCustomer, db.customers]);
 
   const [form, setForm] = useState({ name: "", phone: "", address: "" });
   const [payAmount, setPayAmount] = useState(0);
@@ -86,7 +97,18 @@ function CustomersPage() {
   };
 
   const handleWhatsAppDue = (c: Customer, due: number) => {
-    const customerSales = db.sales.filter((s) => s.customerId === c.id && !s.quotation);
+    const custPhone = c.phone || c.mobile;
+    const customerSales = (db.sales || []).filter((s) => {
+      if (s.quotation) return false;
+      if (s.customerId === c.id) return true;
+      if (custPhone && custPhone !== "9999999999") {
+        const matchedCust = (db.customers || []).find((item) => item.id === s.customerId);
+        if (matchedCust && (matchedCust.phone === custPhone || matchedCust.mobile === custPhone)) {
+          return true;
+        }
+      }
+      return false;
+    });
     const unpaidSales = customerSales.filter(
       (s) => (s.dueAmount !== undefined ? s.dueAmount : Math.max(0, s.total - s.paid)) > 0
     );
@@ -229,8 +251,18 @@ function CustomersPage() {
         ) : (
           <Table head={["Customer Name", "Phone Number", "Address", ">Total Invoices", ">Current Due", "Actions"]}>
             {filtered.map((c) => {
-              const due = customerDue(db, c.id);
-              const salesCount = db.sales.filter((s) => s.customerId === c.id && !s.quotation).length;
+              const custPhone = c.phone || c.mobile;
+              const salesCount = (db.sales || []).filter((s) => {
+                if (s.quotation) return false;
+                if (s.customerId === c.id) return true;
+                if (custPhone && custPhone !== "9999999999") {
+                  const matchedCust = (db.customers || []).find((item) => item.id === s.customerId);
+                  if (matchedCust && (matchedCust.phone === custPhone || matchedCust.mobile === custPhone)) {
+                    return true;
+                  }
+                }
+                return false;
+              }).length;
               return (
                 <Row key={c.id}>
                   <Td>

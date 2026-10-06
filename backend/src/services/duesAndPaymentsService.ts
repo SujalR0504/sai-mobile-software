@@ -2,15 +2,17 @@ import type { DatabaseSync } from "node:sqlite";
 import { uid, todayISO } from "../../../shared/utils/format";
 import type { Customer, Expense, ExpenseCategory, PaymentEntry, PaymentMode, Supplier } from "../../../shared/types";
 
-export function addCustomer(db: DatabaseSync, c: Omit<Customer, "id" | "createdAt">): Customer {
-  const id = uid("c");
+export function addCustomer(db: DatabaseSync, c: Omit<Customer, "id" | "createdAt"> & { id?: string }): Customer {
+  const id = c.id || uid("c");
   const createdAt = todayISO();
+  const phone = c.phone || c.mobile || "9999999999";
+  const mobile = c.mobile || c.phone || "9999999999";
   const stmt = db.prepare(`
-    INSERT INTO customers (id, name, phone, address, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO customers (id, name, phone, mobile, address, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(id, c.name, c.phone, c.address ?? null, createdAt);
-  return { ...c, id, createdAt };
+  stmt.run(id, c.name, phone, mobile, c.address ?? null, createdAt);
+  return { ...c, id, phone, mobile, createdAt };
 }
 
 export function updateCustomer(db: DatabaseSync, id: string, patch: Partial<Customer>): Customer {

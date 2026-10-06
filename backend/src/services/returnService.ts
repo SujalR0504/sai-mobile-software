@@ -29,20 +29,31 @@ export interface RecordPurchaseReturnInput {
 }
 
 export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput): ReturnDoc {
-  const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(input.saleId) as any;
+  let sale = db.prepare("SELECT * FROM sales WHERE id = ? OR invoice_no = ?").get(input.saleId, input.saleId) as any;
   if (!sale) throw new Error(`Sale invoice ${input.saleId} not found`);
+  input.saleId = sale.id;
 
-  const originalItems = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(input.saleId) as any[];
+  const originalItems = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(sale.id) as any[];
 
   // Validate items were part of original sale
   for (const retItem of input.items) {
-    const orig = originalItems.find((o) => o.product_id === retItem.productId);
-    if (!orig) {
-      throw new Error(`Product ${retItem.name} was not part of original invoice ${sale.invoice_no}`);
-    }
-    if (retItem.qty > orig.qty) {
+    const orig = originalItems.find(
+      (o) => o.product_id === retItem.productId || o.name === retItem.name || (retItem.unitId && o.unit_id === retItem.unitId)
+    );
+    if (orig && retItem.qty > orig.qty) {
       throw new Error(`Cannot return ${retItem.qty} of ${retItem.name}. Original sale had only ${orig.qty}`);
     }
+  }
+
+  let customerId = sale.customer_id;
+  if (!customerId || !db.prepare("SELECT id FROM customers WHERE id = ?").get(customerId)) {
+    const c0 = db.prepare("SELECT id FROM customers WHERE id = 'c0'").get();
+    if (!c0) {
+      db.prepare(
+        "INSERT OR IGNORE INTO customers (id, name, phone, mobile, created_at, updated_at) VALUES ('c0', 'Cash / Walk-in Customer', '9999999999', '9999999999', ?, ?)"
+      ).run(todayISO(), todayISO());
+    }
+    customerId = "c0";
   }
 
   const amount = input.items.reduce((sum, item) => sum + item.price * item.qty, 0);
@@ -50,31 +61,33 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
   const date = todayISO();
   const isDealerReturn = input.destination === "DEALER";
   const condition = input.condition || (isDealerReturn ? "DAMAGED" : "GOOD");
-  // Sales Return -> status = IN_STOCK (if restocking to inventory) or PURCHASE_RETURNED (if returning to dealer)
+  // Sales Return -> status = available (if restocking to inventory) or PURCHASE_RETURNED (if returning to dealer)
   const unitStatus = isDealerReturn
     ? "PURCHASE_RETURNED"
     : condition === "GOOD"
-    ? "IN_STOCK"
+    ? "available"
     : condition === "DAMAGED"
-    ? "DAMAGED"
+    ? "damaged"
     : "UNDER_INSPECTION";
 
   db.exec("BEGIN TRANSACTION;");
   try {
     const insertReturnStmt = db.prepare(`
-      INSERT INTO returns (id, business_id, type, ref_id, ref_no, date, party_id, amount, reason, condition, mode)
-      VALUES (?, 'biz_default', 'sale', ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO returns (id, business_id, type, ref_id, ref_no, date, party_id, amount, reason, condition, mode, destination, dealer_id)
+      VALUES (?, 'biz_default', 'sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     insertReturnStmt.run(
       returnId,
       input.saleId,
       sale.invoice_no,
       date,
-      sale.customer_id,
+      customerId,
       amount,
       input.reason,
       condition,
-      input.mode
+      input.mode,
+      input.destination || "INVENTORY",
+      input.dealerId || null
     );
 
     const insertReturnItemStmt = db.prepare(`
@@ -89,11 +102,27 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
     `);
 
     input.items.forEach((item, idx) => {
+      let pId = item.productId;
+      const pExists = db.prepare("SELECT id FROM products WHERE id = ?").get(pId);
+      if (!pExists) {
+        const pByName = db.prepare("SELECT id FROM products WHERE name = ? COLLATE NOCASE").get(item.name) as any;
+        if (pByName) pId = pByName.id;
+      }
+
+      let uId = item.unitId ?? null;
+      if (uId && !db.prepare("SELECT id FROM units WHERE id = ?").get(uId)) {
+        uId = null;
+      }
+      if (!uId && item.imei) {
+        const uByImei = db.prepare("SELECT id FROM units WHERE imei1 = ? OR imei2 = ?").get(item.imei, item.imei) as any;
+        if (uByImei) uId = uByImei.id;
+      }
+
       insertReturnItemStmt.run(
         `${returnId}_i_${idx}`,
         returnId,
-        item.productId,
-        item.unitId ?? null,
+        pId,
+        uId,
         item.name,
         item.qty,
         item.price,
@@ -101,15 +130,20 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
         item.costPrice || 0
       );
 
-      if (item.unitId) {
-        updateUnitStmt.run(unitStatus, item.unitId);
-      } else if (!isDealerReturn && condition === "GOOD") {
-        db.prepare("UPDATE products SET qty = qty + ? WHERE id = ? AND tracked = 0").run(item.qty, item.productId);
+      if (uId) {
+        updateUnitStmt.run(unitStatus, uId);
+      } else if (item.imei) {
+        db.prepare("UPDATE units SET status = ?, sale_id = NULL, customer_id = NULL WHERE imei1 = ? OR imei2 = ?").run(unitStatus, item.imei, item.imei);
+      }
+
+      // Universal stock increment for restocking
+      if (!isDealerReturn && condition === "GOOD") {
+        db.prepare("UPDATE products SET qty = qty + ? WHERE id = ?").run(item.qty, pId);
       }
 
       recordStockMovement(db, {
-        productId: item.productId,
-        unitId: item.unitId,
+        productId: pId,
+        unitId: uId,
         imei: item.imei,
         movementType: "SALE_RETURN",
         quantity: item.qty,
@@ -145,7 +179,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
         creditNoteId,
         creditNoteNo,
         date,
-        sale.customer_id,
+        customerId,
         input.saleId,
         sale.invoice_no,
         sale.date,
@@ -161,7 +195,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
         now
       );
 
-      // Insert credit note items
+      // Insert credit note items safely with valid FKs
       const insertItemStmt = db.prepare(`
         INSERT INTO credit_note_items (
           id, credit_note_id, product_id, unit_id, imei, name, qty,
@@ -170,11 +204,27 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
       `);
 
       input.items.forEach((it, idx) => {
+        let pId = it.productId;
+        const pExists = db.prepare("SELECT id FROM products WHERE id = ?").get(pId);
+        if (!pExists) {
+          const pByName = db.prepare("SELECT id FROM products WHERE name = ? COLLATE NOCASE").get(it.name) as any;
+          if (pByName) pId = pByName.id;
+        }
+
+        let uId = it.unitId || null;
+        if (uId && !db.prepare("SELECT id FROM units WHERE id = ?").get(uId)) {
+          uId = null;
+        }
+        if (!uId && it.imei) {
+          const uByImei = db.prepare("SELECT id FROM units WHERE imei1 = ? OR imei2 = ?").get(it.imei, it.imei) as any;
+          if (uByImei) uId = uByImei.id;
+        }
+
         insertItemStmt.run(
           `${creditNoteId}_i_${idx}`,
           creditNoteId,
-          it.productId,
-          it.unitId || null,
+          pId,
+          uId,
           it.imei || null,
           it.name,
           it.qty,
@@ -186,7 +236,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
 
       recordCustomerLedger(
         db,
-        sale.customer_id,
+        customerId,
         "CREDIT_NOTE",
         creditNoteId,
         0,
@@ -197,7 +247,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
         creditNoteNo
       );
     } else {
-      recordCustomerLedger(db, sale.customer_id, "REFUND", returnId, amount, 0, `Refund for return against ${sale.invoice_no}`);
+      recordCustomerLedger(db, customerId, "REFUND", returnId, amount, 0, `Refund for return against ${sale.invoice_no}`);
       recordCashbookEntry(db, "SALE_RETURN_REFUND", returnId, "Refunds", 0, amount, `Refund to customer for return of bill ${sale.invoice_no}`);
     }
 
@@ -212,18 +262,21 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
     });
 
     if (isDealerReturn && input.dealerId) {
-      recordSupplierLedger(
-        db,
-        input.dealerId,
-        "PURCHASE_RETURN",
-        returnId,
-        amount,
-        0,
-        `Sales Return #${sale.invoice_no} forwarded to Dealer: ${input.reason}`,
-        undefined,
-        "DEALER_RETURN",
-        `DR-${sale.invoice_no}`
-      );
+      const supExists = db.prepare("SELECT id FROM suppliers WHERE id = ?").get(input.dealerId);
+      if (supExists) {
+        recordSupplierLedger(
+          db,
+          input.dealerId,
+          "PURCHASE_RETURN",
+          returnId,
+          amount,
+          0,
+          `Sales Return #${sale.invoice_no} forwarded to Dealer: ${input.reason}`,
+          undefined,
+          "DEALER_RETURN",
+          `DR-${sale.invoice_no}`
+        );
+      }
     }
 
     db.exec("COMMIT;");
@@ -234,7 +287,7 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
       refId: input.saleId,
       refNo: sale.invoice_no,
       date,
-      partyId: sale.customer_id,
+      partyId: customerId,
       items: input.items,
       amount,
       reason: input.reason,
@@ -250,8 +303,20 @@ export function recordSaleReturn(db: DatabaseSync, input: RecordSaleReturnInput)
 }
 
 export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseReturnInput): ReturnDoc {
-  const purchase = db.prepare("SELECT * FROM purchases WHERE id = ?").get(input.purchaseId) as any;
+  const purchase = db.prepare("SELECT * FROM purchases WHERE id = ? OR invoice_no = ?").get(input.purchaseId, input.purchaseId) as any;
   if (!purchase) throw new Error(`Purchase invoice ${input.purchaseId} not found`);
+  input.purchaseId = purchase.id;
+
+  let supplierId = purchase.supplier_id;
+  if (!supplierId || !db.prepare("SELECT id FROM suppliers WHERE id = ?").get(supplierId)) {
+    const s0 = db.prepare("SELECT id FROM suppliers LIMIT 1").get() as any;
+    if (s0) {
+      supplierId = s0.id;
+    } else {
+      supplierId = "s_default";
+      db.prepare("INSERT OR IGNORE INTO suppliers (id, name, phone, created_at, updated_at) VALUES ('s_default', 'Default Supplier', '9999999999', ?, ?)").run(todayISO(), todayISO());
+    }
+  }
 
   const returnId = uid("ret");
   const date = todayISO();
@@ -260,17 +325,18 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
   db.exec("BEGIN TRANSACTION;");
   try {
     const insertReturnStmt = db.prepare(`
-      INSERT INTO returns (id, business_id, type, ref_id, ref_no, date, party_id, amount, reason, condition, mode)
-      VALUES (?, 'biz_default', 'purchase', ?, ?, ?, ?, ?, ?, 'DAMAGED', 'Credit Note')
+      INSERT INTO returns (id, business_id, type, ref_id, ref_no, date, party_id, amount, reason, condition, mode, destination, dealer_id)
+      VALUES (?, 'biz_default', 'purchase', ?, ?, ?, ?, ?, ?, 'DAMAGED', 'Credit Note', 'DEALER', ?)
     `);
     insertReturnStmt.run(
       returnId,
       input.purchaseId,
       purchase.invoice_no,
       date,
-      purchase.supplier_id,
+      supplierId,
       amount,
-      input.reason
+      input.reason,
+      supplierId
     );
 
     const insertReturnItemStmt = db.prepare(`
@@ -287,15 +353,31 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
     const deductStockStmt = db.prepare(`
       UPDATE products
       SET qty = MAX(0, qty - ?)
-      WHERE id = ? AND tracked = 0
+      WHERE id = ?
     `);
 
     input.items.forEach((item, idx) => {
+      let pId = item.productId;
+      const pExists = db.prepare("SELECT id FROM products WHERE id = ?").get(pId);
+      if (!pExists) {
+        const pByName = db.prepare("SELECT id FROM products WHERE name = ? COLLATE NOCASE").get(item.name) as any;
+        if (pByName) pId = pByName.id;
+      }
+
+      let uId = item.unitId ?? null;
+      if (uId && !db.prepare("SELECT id FROM units WHERE id = ?").get(uId)) {
+        uId = null;
+      }
+      if (!uId && item.imei) {
+        const uByImei = db.prepare("SELECT id FROM units WHERE imei1 = ? OR imei2 = ?").get(item.imei, item.imei) as any;
+        if (uByImei) uId = uByImei.id;
+      }
+
       insertReturnItemStmt.run(
         `${returnId}_i_${idx}`,
         returnId,
-        item.productId,
-        item.unitId ?? null,
+        pId,
+        uId,
         item.name,
         item.qty,
         item.price,
@@ -303,15 +385,18 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
         item.costPrice || 0
       );
 
-      if (item.unitId) {
-        updateUnitStmt.run(item.unitId);
-      } else {
-        deductStockStmt.run(item.qty, item.productId);
+      if (uId) {
+        updateUnitStmt.run(uId);
+      } else if (item.imei) {
+        db.prepare("UPDATE units SET status = 'PURCHASE_RETURNED' WHERE imei1 = ? OR imei2 = ?").run(item.imei, item.imei);
       }
 
+      // Universal stock deduction
+      deductStockStmt.run(item.qty, pId);
+
       recordStockMovement(db, {
-        productId: item.productId,
-        unitId: item.unitId,
+        productId: pId,
+        unitId: uId,
         imei: item.imei,
         movementType: "PURCHASE_RETURN",
         quantity: -item.qty,
@@ -349,7 +434,7 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
         debitNoteId,
         debitNoteNo,
         date,
-        purchase.supplier_id,
+        supplierId,
         purchase.id,
         purchase.invoice_no,
         purchase.date,
@@ -374,11 +459,27 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
       `);
 
       input.items.forEach((it, idx) => {
+        let pId = it.productId;
+        const pExists = db.prepare("SELECT id FROM products WHERE id = ?").get(pId);
+        if (!pExists) {
+          const pByName = db.prepare("SELECT id FROM products WHERE name = ? COLLATE NOCASE").get(it.name) as any;
+          if (pByName) pId = pByName.id;
+        }
+
+        let uId = it.unitId || null;
+        if (uId && !db.prepare("SELECT id FROM units WHERE id = ?").get(uId)) {
+          uId = null;
+        }
+        if (!uId && it.imei) {
+          const uByImei = db.prepare("SELECT id FROM units WHERE imei1 = ? OR imei2 = ?").get(it.imei, it.imei) as any;
+          if (uByImei) uId = uByImei.id;
+        }
+
         insertItemStmt.run(
           `${debitNoteId}_i_${idx}`,
           debitNoteId,
-          it.productId,
-          it.unitId || null,
+          pId,
+          uId,
           it.imei || null,
           it.name,
           it.qty,
@@ -390,7 +491,7 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
 
       recordSupplierLedger(
         db,
-        purchase.supplier_id,
+        supplierId,
         "DEBIT_NOTE",
         debitNoteId,
         amount,
@@ -401,7 +502,7 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
         debitNoteNo
       );
     } else {
-      recordSupplierLedger(db, purchase.supplier_id, "PURCHASE_RETURN", returnId, amount, 0, `Purchase return for ${purchase.invoice_no}`);
+      recordSupplierLedger(db, supplierId, "PURCHASE_RETURN", returnId, amount, 0, `Purchase return for ${purchase.invoice_no}`);
     }
 
     logAudit(db, {
@@ -422,12 +523,14 @@ export function recordPurchaseReturn(db: DatabaseSync, input: RecordPurchaseRetu
       refId: input.purchaseId,
       refNo: purchase.invoice_no,
       date,
-      partyId: purchase.supplier_id,
+      partyId: supplierId,
       items: input.items,
       amount,
       reason: input.reason,
       condition: "DAMAGED",
       mode: "Credit Note",
+      destination: "DEALER",
+      dealerId: supplierId,
     };
   } catch (error) {
     db.exec("ROLLBACK;");

@@ -24,6 +24,10 @@ import type {
   Settings,
   Supplier,
   Unit,
+  InterestType,
+  PaymentSplit,
+  CreditNote,
+  DebitNote,
 } from "./types";
 import {
   auditApi,
@@ -36,9 +40,20 @@ import {
   returnsApi,
   salesApi,
   settingsApi,
+  ordersApi,
+  creditNotesApi,
+  debitNotesApi,
 } from "../services/api";
+import type {
+  CustomerOrder,
+  CreateOrderInput,
+  ReceiveOrderPaymentInput,
+  ConvertOrderToSaleInput,
+  CancelOrderInput,
+  OrderStatus,
+} from "./types";
 
-const STORAGE_KEY = "retail-erp-mobile-v1";
+const STORAGE_KEY = "retail-erp-mobile-v2";
 
 interface StoreValue {
   db: DB;
@@ -56,9 +71,10 @@ interface StoreValue {
   recordSale: (input: {
     customerId: string;
     invoiceType?: "GST" | "NON_GST";
+    selectedTemplateId?: "template_modern" | "template_classic" | "template_compact" | string;
     items: LineItem[];
     discount: number;
-    payments: { mode: Sale["payments"][number]["mode"]; amount: number }[];
+    payments: PaymentSplit[];
     quotation?: boolean;
     note?: string;
     isEmi?: boolean;
@@ -72,6 +88,24 @@ interface StoreValue {
     tenureMonths?: number;
     firstEmiDate?: string;
   }) => Sale;
+  recordCustomerPayment: (input: {
+    customerId: string;
+    amount: number;
+    paymentMethod: string;
+    paymentAccountId?: string;
+    referenceNo?: string;
+    notes?: string;
+    createdBy?: string;
+  }) => Promise<any>;
+  recordDealerPayment: (input: {
+    dealerId: string;
+    amount: number;
+    paymentMethod: string;
+    paymentAccountId?: string;
+    referenceNo?: string;
+    notes?: string;
+    createdBy?: string;
+  }) => Promise<any>;
   recordPurchase: (input: {
     purchaseType?: "GST" | "NON_GST";
     supplierId?: string;
@@ -119,18 +153,34 @@ interface StoreValue {
     items: LineItem[];
     reason: string;
     mode: ReturnDoc["mode"];
-  }) => void;
+    destination?: "INVENTORY" | "DEALER";
+    dealerId?: string;
+  }) => Promise<void>;
   recordPurchaseReturn: (input: {
     purchaseId: string;
     items: LineItem[];
     reason: string;
-  }) => void;
+  }) => Promise<void>;
   addRepair: (r: Omit<Repair, "id" | "jobId" | "createdAt" | "status">) => Repair;
   setRepairStatus: (id: string, status: RepairStatus) => void;
   addExpense: (e: Omit<Expense, "id">) => void;
   addPayment: (p: Omit<PaymentEntry, "id">) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   resetDemo: () => void;
+  wipeAllData: () => void;
+  createOrder: (input: CreateOrderInput) => Promise<CustomerOrder>;
+  receiveOrderPayment: (orderId: string, input: ReceiveOrderPaymentInput) => Promise<CustomerOrder>;
+  convertOrderToSale: (orderId: string, input: ConvertOrderToSaleInput) => Promise<{ sale: Sale; order: CustomerOrder }>;
+  cancelOrder: (orderId: string, input: CancelOrderInput) => Promise<CustomerOrder>;
+  updateOrderStatus: (orderId: string, status: OrderStatus, remarks?: string) => Promise<CustomerOrder>;
+  createCreditNote: (data: any) => Promise<CreditNote>;
+  applyCreditNote: (id: string, data: { allocations: Array<{ saleId: string; amount: number }> }) => Promise<CreditNote>;
+  refundCreditNote: (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }) => Promise<CreditNote>;
+  cancelCreditNote: (id: string, reason: string) => Promise<CreditNote>;
+  createDebitNote: (data: any) => Promise<DebitNote>;
+  applyDebitNote: (id: string, data: { allocations: Array<{ purchaseId: string; amount: number }> }) => Promise<DebitNote>;
+  refundDebitNote: (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }) => Promise<DebitNote>;
+  cancelDebitNote: (id: string, reason: string) => Promise<DebitNote>;
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
@@ -184,11 +234,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addCustomer: StoreValue["addCustomer"] = useCallback((c) => {
-    const created: Customer = { ...c, id: uid("c"), createdAt: todayISO() };
+    const created: Customer = { ...c, id: (c as any).id || uid("c"), createdAt: todayISO() };
     setDb((d) => ({ ...d, customers: [created, ...d.customers] }));
 
     customersApi
-      .addCustomer(c)
+      .addCustomer(created)
       .then((saved) => {
         if (saved) {
           setDb((d) => ({
@@ -197,7 +247,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }));
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to add customer on backend:", err);
+      });
 
     return created;
   }, []);
@@ -292,7 +344,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const recordSale: StoreValue["recordSale"] = useCallback(
-    ({ customerId, invoiceType, items, discount, payments, quotation, note, isEmi, emiCompanyId, emiDownPayment, emiFinancedAmount, financeReferenceNumber, expectedPaymentDate, interestRate, interestType, tenureMonths, firstEmiDate }) => {
+    ({ customerId, invoiceType, selectedTemplateId, items, discount, payments, quotation, note, isEmi, emiCompanyId, emiDownPayment, emiFinancedAmount, financeReferenceNumber, expectedPaymentDate, interestRate, interestType, tenureMonths, firstEmiDate }) => {
       const invType = invoiceType || "GST";
       const gross = items.reduce((s, i) => s + i.price * i.qty, 0);
       const total = Math.max(0, gross - discount);
@@ -305,6 +357,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         id: uid("s"),
         invoiceNo: "",
         invoiceType: invType,
+        selectedTemplateId: selectedTemplateId || "template_modern",
         date: todayISO(),
         customerId,
         items,
@@ -327,7 +380,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setDb((d) => {
         sale.invoiceNo = nextNo(d.settings.invoicePrefix, d.sales.map((s) => s.invoiceNo));
         const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id) && !quotation
+          items.some((i) => i.unitId === u.id || (i.imei && (i.imei === u.imei1 || i.imei === u.imei2))) && !quotation
             ? { ...u, status: "sold" as const, saleId: sale.id, customerId }
             : u,
         );
@@ -335,7 +388,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? d.products
           : d.products.map((p) => {
               const item = items.find((i) => i.productId === p.id);
-              return item && !p.tracked ? { ...p, qty: Math.max(0, p.qty - item.qty) } : p;
+              return item ? { ...p, qty: Math.max(0, p.qty - item.qty) } : p;
             });
         const newPayments: PaymentEntry[] = quotation
           ? []
@@ -367,6 +420,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .createSale({
           customerId,
           invoiceType: invType,
+          selectedTemplateId,
           items,
           discount,
           payments,
@@ -384,19 +438,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           tenureMonths,
           firstEmiDate,
         })
-        .then((savedSale) => {
+        .then(async (savedSale) => {
           if (savedSale) {
             setDb((d) => ({
               ...d,
               sales: d.sales.map((s) => (s.id === sale.id ? savedSale : s)),
             }));
+            await refreshFromBackend();
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("Backend salesApi.createSale error:", err);
+        });
 
       return sale;
     },
-    [nextNo],
+    [nextNo, refreshFromBackend],
   );
 
   const recordPurchase: StoreValue["recordPurchase"] = useCallback(
@@ -410,15 +467,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const recordSaleReturn: StoreValue["recordSaleReturn"] = useCallback(
-    ({ saleId, items, reason, mode }) => {
+    async ({ saleId, items, reason, mode, destination = "INVENTORY", dealerId }) => {
+      const isDealerReturn = destination === "DEALER";
+
       setDb((d) => {
-        const sale = d.sales.find((s) => s.id === saleId);
+        const sale = d.sales.find((s) => s.id === saleId || s.invoiceNo === saleId);
         if (!sale) return d;
         const amount = items.reduce((s, i) => s + i.price * i.qty, 0);
         const doc: ReturnDoc = {
           id: uid("ret"),
           type: "sale",
-          refId: saleId,
+          refId: sale.id,
           refNo: sale.invoiceNo,
           date: todayISO(),
           partyId: sale.customerId,
@@ -426,35 +485,72 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           amount,
           reason,
           mode,
+          destination,
+          dealerId,
         };
-        const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id)
-            ? { ...u, status: "returned" as const, saleId: undefined, customerId: undefined }
-            : u,
-        );
+
+        const units = d.units.map((u) => {
+          const matched = items.some(
+            (i) => i.unitId === u.id || (i.imei && (u.imei1 === i.imei || u.imei2 === i.imei))
+          );
+          if (!matched) return u;
+          return {
+            ...u,
+            status: isDealerReturn ? ("PURCHASE_RETURNED" as const) : ("available" as const),
+            saleId: undefined,
+            customerId: undefined,
+          };
+        });
+
         const products = d.products.map((p) => {
-          const line = items.filter((i) => i.productId === p.id && !i.unitId);
-          if (!line.length || p.tracked) return p;
+          const line = items.filter((i) => i.productId === p.id);
+          if (!line.length || isDealerReturn) return p;
           return { ...p, qty: p.qty + line.reduce((s, i) => s + i.qty, 0) };
         });
-        return { ...d, returns: [doc, ...d.returns], units, products };
+
+        const additionalReturns: ReturnDoc[] = [];
+        if (isDealerReturn && dealerId) {
+          additionalReturns.push({
+            id: uid("ret"),
+            type: "purchase",
+            refId: sale.id,
+            refNo: `DR-${sale.invoiceNo}`,
+            date: todayISO(),
+            partyId: dealerId,
+            items,
+            amount,
+            reason: `Forwarded to Dealer from Sale Return ${sale.invoiceNo}: ${reason}`,
+            mode: "Credit Note",
+            destination: "DEALER",
+            dealerId,
+          });
+        }
+
+        return { ...d, returns: [...additionalReturns, doc, ...d.returns], units, products };
       });
 
-      returnsApi.recordSaleReturn({ saleId, items, reason, mode }).catch(() => {});
+      try {
+        await returnsApi.recordSaleReturn({ saleId, items, reason, mode, destination, dealerId });
+      } catch (err) {
+        console.error("Backend recordSaleReturn failed:", err);
+        throw err;
+      } finally {
+        await refreshFromBackend();
+      }
     },
-    [],
+    [refreshFromBackend],
   );
 
   const recordPurchaseReturn: StoreValue["recordPurchaseReturn"] = useCallback(
-    ({ purchaseId, items, reason }) => {
+    async ({ purchaseId, items, reason }) => {
       setDb((d) => {
-        const pur = d.purchases.find((p) => p.id === purchaseId);
+        const pur = d.purchases.find((p) => p.id === purchaseId || p.invoiceNo === purchaseId);
         if (!pur) return d;
         const amount = items.reduce((s, i) => s + i.price * i.qty, 0);
         const doc: ReturnDoc = {
           id: uid("ret"),
           type: "purchase",
-          refId: purchaseId,
+          refId: pur.id,
           refNo: pur.invoiceNo,
           date: todayISO(),
           partyId: pur.supplierId,
@@ -462,21 +558,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           amount,
           reason,
           mode: "Credit Note",
+          destination: "DEALER",
+          dealerId: pur.supplierId,
         };
-        const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id) ? { ...u, status: "damaged" as const } : u,
-        );
+
+        const units = d.units.map((u) => {
+          const matched = items.some(
+            (i) => i.unitId === u.id || (i.imei && (u.imei1 === i.imei || u.imei2 === i.imei))
+          );
+          if (!matched) return u;
+          return { ...u, status: "PURCHASE_RETURNED" as const };
+        });
+
         const products = d.products.map((p) => {
-          const line = items.filter((i) => i.productId === p.id && !i.unitId);
-          if (!line.length || p.tracked) return p;
+          const line = items.filter((i) => i.productId === p.id);
+          if (!line.length) return p;
           return { ...p, qty: Math.max(0, p.qty - line.reduce((s, i) => s + i.qty, 0)) };
         });
+
         return { ...d, returns: [doc, ...d.returns], units, products };
       });
 
-      returnsApi.recordPurchaseReturn({ purchaseId, items, reason }).catch(() => {});
+      try {
+        await returnsApi.recordPurchaseReturn({ purchaseId, items, reason });
+      } catch (err) {
+        console.error("Backend recordPurchaseReturn failed:", err);
+        throw err;
+      } finally {
+        await refreshFromBackend();
+      }
     },
-    [],
+    [refreshFromBackend],
   );
 
   const addRepair: StoreValue["addRepair"] = useCallback(
@@ -533,6 +645,124 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     auditApi.addPayment(p).catch(() => {});
   }, []);
 
+  const recordCustomerPayment: StoreValue["recordCustomerPayment"] = useCallback(
+    async (input) => {
+      const payId = uid("pay");
+      const date = todayISO();
+      const newPay: PaymentEntry = {
+        id: payId,
+        date,
+        party: "customer",
+        partyId: input.customerId,
+        amount: input.amount,
+        mode: (input.paymentMethod as PaymentMode) || "UPI",
+        note: input.notes || "Customer settlement",
+      };
+
+      setDb((d) => {
+        const prevEntries = (d.customerLedger || []).filter((e) => e.customerId === input.customerId);
+        const prevBal = prevEntries.length > 0 && typeof prevEntries[0].balance === "number"
+          ? prevEntries[0].balance
+          : customerDue(d, input.customerId);
+        const newBal = Math.max(0, prevBal - input.amount);
+
+        const newLedgerEntry: CustomerLedgerEntry = {
+          id: uid("cldg"),
+          businessId: "biz_default",
+          customerId: input.customerId,
+          date,
+          type: "PAYMENT",
+          referenceId: payId,
+          debit: 0,
+          credit: input.amount,
+          balance: newBal,
+          description: input.notes || "Payment received",
+          paymentAccountId: input.paymentAccountId,
+          paymentMethod: input.paymentMethod,
+          referenceNo: input.referenceNo,
+          createdAt: new Date().toISOString(),
+        };
+
+        return {
+          ...d,
+          payments: [newPay, ...(d.payments || [])],
+          customerLedger: [newLedgerEntry, ...(d.customerLedger || [])],
+        };
+      });
+
+      const res = await customersApi.recordCustomerPayment(input.customerId, {
+        amount: input.amount,
+        paymentMethod: input.paymentMethod,
+        paymentAccountId: input.paymentAccountId,
+        referenceNo: input.referenceNo,
+        notes: input.notes,
+        createdBy: input.createdBy,
+      });
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const recordDealerPayment: StoreValue["recordDealerPayment"] = useCallback(
+    async (input) => {
+      const payId = uid("pay");
+      const date = todayISO();
+      const newPay: PaymentEntry = {
+        id: payId,
+        date,
+        party: "supplier",
+        partyId: input.dealerId,
+        amount: input.amount,
+        mode: (input.paymentMethod as PaymentMode) || "Bank",
+        note: input.notes || "Dealer settlement",
+      };
+
+      setDb((d) => {
+        const prevEntries = (d.supplierLedger || []).filter((e) => e.supplierId === input.dealerId);
+        const prevBal = prevEntries.length > 0 && typeof prevEntries[0].balance === "number"
+          ? prevEntries[0].balance
+          : supplierDue(d, input.dealerId);
+        const newBal = Math.max(0, prevBal - input.amount);
+
+        const newLedgerEntry: SupplierLedgerEntry = {
+          id: uid("sldg"),
+          businessId: "biz_default",
+          supplierId: input.dealerId,
+          date,
+          type: "PAYMENT",
+          referenceId: payId,
+          debit: input.amount,
+          credit: 0,
+          balance: newBal,
+          description: input.notes || "Payment to dealer",
+          paymentAccountId: input.paymentAccountId,
+          paymentMethod: input.paymentMethod,
+          referenceNo: input.referenceNo,
+          createdAt: new Date().toISOString(),
+        };
+
+        return {
+          ...d,
+          payments: [newPay, ...(d.payments || [])],
+          supplierLedger: [newLedgerEntry, ...(d.supplierLedger || [])],
+        };
+      });
+
+      const res = await dealersApi.recordDealerPayment(input.dealerId, {
+        amount: input.amount,
+        paymentMethod: input.paymentMethod,
+        paymentAccountId: input.paymentAccountId,
+        referenceNo: input.referenceNo,
+        notes: input.notes,
+        createdBy: input.createdBy,
+      });
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
   const updateSettings: StoreValue["updateSettings"] = useCallback((patch) => {
     setDb((d) => ({ ...d, settings: { ...d.settings, ...patch } }));
 
@@ -548,6 +778,169 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {});
   }, []);
+
+  const wipeAllData = useCallback(() => {
+    setDb((d) => ({
+      ...d,
+      products: [],
+      units: [],
+      sales: [],
+      purchases: [],
+      purchaseAttachments: [],
+      creditNotes: [],
+      debitNotes: [],
+      returns: [],
+      repairs: [],
+      expenses: [],
+      payments: [],
+      quotations: [],
+      employees: [],
+      attendance: [],
+      payroll: [],
+      stockMovements: [],
+      customerLedger: [],
+      supplierLedger: [],
+      cashbook: [],
+      auditLogs: [],
+      orders: [],
+      customers: [{ id: "c0", name: "Cash / Walk-in Customer", phone: "9999999999", createdAt: todayISO() }],
+      suppliers: [],
+    }));
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {}
+
+    settingsApi
+      .wipeAllData()
+      .then((data) => {
+        if (data?.db) {
+          setDb(data.db);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data.db));
+          } catch {}
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to wipe data on backend:", err);
+      });
+  }, []);
+
+  const createOrder = useCallback(
+    async (input: CreateOrderInput): Promise<CustomerOrder> => {
+      const order = await ordersApi.createOrder(input);
+      await refreshFromBackend();
+      return order;
+    },
+    [refreshFromBackend],
+  );
+
+  const receiveOrderPayment = useCallback(
+    async (orderId: string, input: ReceiveOrderPaymentInput): Promise<CustomerOrder> => {
+      const order = await ordersApi.receivePayment(orderId, input);
+      await refreshFromBackend();
+      return order;
+    },
+    [refreshFromBackend],
+  );
+
+  const convertOrderToSale = useCallback(
+    async (orderId: string, input: ConvertOrderToSaleInput): Promise<{ sale: Sale; order: CustomerOrder }> => {
+      const result = await ordersApi.convertToSale(orderId, input);
+      await refreshFromBackend();
+      return result;
+    },
+    [refreshFromBackend],
+  );
+
+  const cancelOrder = useCallback(
+    async (orderId: string, input: CancelOrderInput): Promise<CustomerOrder> => {
+      const order = await ordersApi.cancelOrder(orderId, input);
+      await refreshFromBackend();
+      return order;
+    },
+    [refreshFromBackend],
+  );
+
+  const updateOrderStatus = useCallback(
+    async (orderId: string, status: OrderStatus, remarks?: string): Promise<CustomerOrder> => {
+      const order = await ordersApi.updateStatus(orderId, status, remarks);
+      await refreshFromBackend();
+      return order;
+    },
+    [refreshFromBackend],
+  );
+
+  const createCreditNote = useCallback(
+    async (data: any): Promise<CreditNote> => {
+      const res = await creditNotesApi.create(data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const applyCreditNote = useCallback(
+    async (id: string, data: { allocations: Array<{ saleId: string; amount: number }> }): Promise<CreditNote> => {
+      const res = await creditNotesApi.apply(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const refundCreditNote = useCallback(
+    async (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }): Promise<CreditNote> => {
+      const res = await creditNotesApi.refund(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const cancelCreditNote = useCallback(
+    async (id: string, reason: string): Promise<CreditNote> => {
+      const res = await creditNotesApi.cancel(id, reason);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const createDebitNote = useCallback(
+    async (data: any): Promise<DebitNote> => {
+      const res = await debitNotesApi.create(data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const applyDebitNote = useCallback(
+    async (id: string, data: { allocations: Array<{ purchaseId: string; amount: number }> }): Promise<DebitNote> => {
+      const res = await debitNotesApi.apply(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const refundDebitNote = useCallback(
+    async (id: string, data: { amount: number; paymentMethod: string; paymentAccountId?: string; referenceNo?: string; notes?: string }): Promise<DebitNote> => {
+      const res = await debitNotesApi.refund(id, data);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
+
+  const cancelDebitNote = useCallback(
+    async (id: string, reason: string): Promise<DebitNote> => {
+      const res = await debitNotesApi.cancel(id, reason);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
+  );
 
   const value = useMemo<StoreValue>(
     () => ({
@@ -570,8 +963,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRepairStatus,
       addExpense,
       addPayment,
+      recordCustomerPayment,
+      recordDealerPayment,
       updateSettings,
       resetDemo,
+      wipeAllData,
+      createOrder,
+      receiveOrderPayment,
+      convertOrderToSale,
+      cancelOrder,
+      updateOrderStatus,
+      createCreditNote,
+      applyCreditNote,
+      refundCreditNote,
+      cancelCreditNote,
+      createDebitNote,
+      applyDebitNote,
+      refundDebitNote,
+      cancelDebitNote,
     }),
     [
       db,
@@ -593,8 +1002,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRepairStatus,
       addExpense,
       addPayment,
+      recordCustomerPayment,
+      recordDealerPayment,
       updateSettings,
       resetDemo,
+      wipeAllData,
+      createOrder,
+      receiveOrderPayment,
+      convertOrderToSale,
+      cancelOrder,
+      updateOrderStatus,
+      createCreditNote,
+      applyCreditNote,
+      refundCreditNote,
+      cancelCreditNote,
+      createDebitNote,
+      applyDebitNote,
+      refundDebitNote,
+      cancelDebitNote,
     ],
   );
 
@@ -610,10 +1035,11 @@ export function useStore() {
 /* ---------- derived helpers ---------- */
 
 export const stockOf = (db: DB, productId: string) => {
-  const p = db.products.find((x) => x.id === productId);
+  const p = (db.products || []).find((x) => x.id === productId);
   if (!p) return 0;
-  if (!p.tracked) return p.qty;
-  return db.units.filter((u) => u.productId === productId && u.status === "available").length;
+  if (!p.tracked) return p.qty ?? 0;
+  const availableUnits = (db.units || []).filter((u) => u.productId === productId && (u.status === "available" || u.status === "IN_STOCK")).length;
+  return availableUnits > 0 ? availableUnits : (p.qty ?? 0);
 };
 
 export const customerDue = (db: DB, customerId: string) => {
@@ -690,3 +1116,15 @@ export const lowStockProducts = (db: DB) =>
     .map((p) => ({ product: p, stock: stockOf(db, p.id) }))
     .filter((r) => r.stock <= r.product.reorderLevel)
     .sort((a, b) => a.stock - b.stock);
+
+export const customerCreditBalance = (db: DB, customerId: string): number => {
+  return (db.creditNotes || [])
+    .filter((cn) => cn.customerId === customerId && (cn.status === "ISSUED" || cn.status === "PARTIALLY_ADJUSTED"))
+    .reduce((sum, cn) => sum + (cn.remainingAmount ?? 0), 0);
+};
+
+export const dealerCreditBalance = (db: DB, supplierId: string): number => {
+  return (db.debitNotes || [])
+    .filter((dn) => dn.supplierId === supplierId && (dn.status === "ISSUED" || dn.status === "PARTIALLY_ADJUSTED"))
+    .reduce((sum, dn) => sum + (dn.remainingAmount ?? 0), 0);
+};

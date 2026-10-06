@@ -341,24 +341,46 @@ function POS() {
     if (!p) return;
     if (p.tracked) {
       const used = items.map((i) => i.unitId);
-      const unit = db.units.find(
-        (u) => u.productId === p.id && u.status === "available" && !used.includes(u.id),
+      const unit = (db.units || []).find(
+        (u) => u.productId === p.id && (u.status === "available" || u.status === "IN_STOCK") && !used.includes(u.id),
       );
-      if (!unit) return;
-      setItems((c) => [
-        ...c,
-        {
-          productId: p.id,
-          name: p.name,
-          unitId: unit.id,
-          imei: unit.imei1,
-          qty: 1,
-          price: p.sellingPrice,
-          gst: p.gst,
-          costPrice: p.purchasePrice,
-          warrantyMonths: p.warrantyMonths,
-        },
-      ]);
+      if (unit) {
+        setItems((c) => [
+          ...c,
+          {
+            productId: p.id,
+            name: p.name,
+            unitId: unit.id,
+            imei: unit.imei1,
+            qty: 1,
+            price: p.sellingPrice,
+            gst: p.gst,
+            costPrice: unit.purchasePrice || p.purchasePrice,
+            warrantyMonths: p.warrantyMonths,
+          },
+        ]);
+        return;
+      }
+      setItems((c) => {
+        const idx = c.findIndex((i) => i.productId === p.id && !i.unitId);
+        if (idx >= 0) {
+          const copy = [...c];
+          copy[idx] = { ...copy[idx]!, qty: copy[idx]!.qty + 1 };
+          return copy;
+        }
+        return [
+          ...c,
+          {
+            productId: p.id,
+            name: p.name,
+            qty: 1,
+            price: p.sellingPrice,
+            gst: p.gst,
+            costPrice: p.purchasePrice,
+            warrantyMonths: p.warrantyMonths,
+          },
+        ];
+      });
       return;
     }
     setItems((c) => {
@@ -411,7 +433,7 @@ function POS() {
     if (mode === "Credit") {
       return [{
         mode: "Credit",
-        amount: 0,
+        amount: total,
       }];
     }
 
@@ -434,6 +456,13 @@ function POS() {
           referenceNumber: emiReference || undefined,
         });
       }
+      const sumEmi = rows.reduce((s, r) => s + r.amount, 0);
+      if (sumEmi < total) {
+        rows.push({
+          mode: "Credit",
+          amount: total - sumEmi,
+        });
+      }
       return rows.length ? rows : [{
         mode: "Cash",
         amount: total,
@@ -442,7 +471,7 @@ function POS() {
     }
 
     if (splitOpen) {
-      return mixedRows
+      const activeRows = mixedRows
         .filter((r) => Number(r.amount) > 0)
         .map((r) => ({
           mode: r.mode,
@@ -450,14 +479,40 @@ function POS() {
           paymentAccountId: r.paymentAccountId || getDefaultAccountForMode(r.mode)?.id,
           referenceNumber: r.referenceNumber || undefined,
         }));
+      const sumSplit = activeRows.reduce((s, r) => s + r.amount, 0);
+      if (sumSplit < total) {
+        activeRows.push({
+          mode: "Credit",
+          amount: total - sumSplit,
+        });
+      }
+      return activeRows;
     }
 
     // Single payment mode (supports partial payment)
     const payAmt = customPaidAmount !== null ? customPaidAmount : total;
+    const singleAccount = selectedAccountId || getDefaultAccountForMode(mode)?.id;
+    if (payAmt < total) {
+      const rows: PaymentSplit[] = [];
+      if (payAmt > 0) {
+        rows.push({
+          mode,
+          amount: payAmt,
+          paymentAccountId: singleAccount,
+          referenceNumber: paymentReference || undefined,
+        });
+      }
+      rows.push({
+        mode: "Credit",
+        amount: total - payAmt,
+      });
+      return rows;
+    }
+
     return [{
       mode,
-      amount: payAmt,
-      paymentAccountId: selectedAccountId || getDefaultAccountForMode(mode)?.id,
+      amount: total,
+      paymentAccountId: singleAccount,
       referenceNumber: paymentReference || undefined,
     }];
   };

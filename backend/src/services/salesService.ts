@@ -61,9 +61,31 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
   }
 
   // Validate Customer
-  const customer = db.prepare("SELECT id, name, phone, mobile FROM customers WHERE id = ?").get(input.customerId) as any;
+  let customer = db.prepare("SELECT id, name, phone, mobile FROM customers WHERE id = ?").get(input.customerId) as any;
   if (!customer) {
-    throw new Error(`Customer '${input.customerId}' not found`);
+    // Check if customer exists by phone or mobile
+    customer = db.prepare("SELECT id, name, phone, mobile FROM customers WHERE phone = ? OR mobile = ?").get(input.customerId, input.customerId) as any;
+    if (customer) {
+      input.customerId = customer.id;
+    } else {
+      const defaultCustomer = db.prepare("SELECT id, name, phone, mobile FROM customers WHERE id = 'c0'").get() as any;
+      if (defaultCustomer && (input.customerId === "c0" || !input.customerId)) {
+        customer = defaultCustomer;
+        input.customerId = "c0";
+      } else {
+        const newCustId = input.customerId || uid("c");
+        const now = todayISO();
+        db.prepare("INSERT INTO customers (id, name, phone, mobile, created_at) VALUES (?, ?, ?, ?, ?)").run(
+          newCustId,
+          "Walk-in Customer",
+          "9999999999",
+          "9999999999",
+          now
+        );
+        customer = { id: newCustId, name: "Walk-in Customer", phone: "9999999999", mobile: "9999999999" };
+        input.customerId = newCustId;
+      }
+    }
   }
 
   const invoiceType: "GST" | "NON_GST" = input.invoiceType || "GST";
@@ -195,34 +217,26 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
     if (!isQuotation) {
       for (const item of input.items) {
         if (item.unitId) {
-          const unit = db.prepare("SELECT id, imei1, status, purchase_price FROM units WHERE id = ?").get(item.unitId) as any;
-          if (!unit) {
-            throw new Error(`Unit ${item.unitId} not found in inventory`);
+          let unit = db.prepare("SELECT id, imei1, status, purchase_price FROM units WHERE id = ?").get(item.unitId) as any;
+          if (!unit && item.imei) {
+            unit = db.prepare("SELECT id, imei1, status, purchase_price FROM units WHERE (imei1 = ? OR imei2 = ?) LIMIT 1").get(item.imei, item.imei) as any;
+            if (unit) item.unitId = unit.id;
           }
-          if (unit.status !== "available" && unit.status !== "IN_STOCK") {
-            throw new Error(`Unit with IMEI ${unit.imei1} is not available (Current status: ${unit.status})`);
-          }
-          item.costPrice = unit.purchase_price;
-        } else {
-          const product = db.prepare("SELECT id, name, qty, tracked, purchase_price FROM products WHERE id = ?").get(item.productId) as any;
-          if (!product) {
-            const isManualItem =
-              (item as any).isManual ||
-              item.productId?.startsWith("custom_") ||
-              item.productId?.startsWith("manual_") ||
-              item.productId?.startsWith("direct_");
-            if (isManualItem) {
-              item.costPrice = item.costPrice ?? 0;
-            } else {
-              throw new Error(`Product ${item.productId} not found`);
+          if (unit) {
+            if (unit.status !== "available" && unit.status !== "IN_STOCK") {
+              throw new Error(`Unit with IMEI ${unit.imei1} is not available (Current status: ${unit.status})`);
             }
+            item.costPrice = item.costPrice ?? unit.purchase_price;
           } else {
-            const allowBypass = (item as any).isManual || (item as any).bypassStock;
-            if (!product.tracked && product.qty < item.qty && !allowBypass) {
-              throw new Error(`Insufficient stock for '${product.name}'. Available: ${product.qty}, requested: ${item.qty}`);
-            }
-            item.costPrice = item.costPrice ?? product.purchase_price;
+            // Unit was not found in database by id or imei; clear unitId so it falls back to product deduction
+            item.unitId = undefined;
           }
+        }
+        const product = db.prepare("SELECT id, name, qty, tracked, purchase_price FROM products WHERE id = ?").get(item.productId) as any;
+        if (product) {
+          item.costPrice = item.costPrice ?? product.purchase_price ?? 0;
+        } else {
+          item.costPrice = item.costPrice ?? 0;
         }
       }
     }
@@ -300,18 +314,27 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
         WHERE id = ?
       `);
 
+      const updateUnitByImeiStmt = db.prepare(`
+        UPDATE units
+        SET status = 'sold', sale_id = ?, customer_id = ?
+        WHERE (imei1 = ? OR imei2 = ?) AND status = 'available'
+      `);
+
       const decrementStockStmt = db.prepare(`
         UPDATE products
         SET qty = MAX(0, qty - ?)
-        WHERE id = ? AND tracked = 0
+        WHERE id = ?
       `);
 
       for (const item of input.items) {
         if (item.unitId) {
           updateUnitStmt.run(saleId, input.customerId, item.unitId);
-        } else {
-          decrementStockStmt.run(item.qty, item.productId);
+        } else if (item.imei) {
+          updateUnitByImeiStmt.run(saleId, input.customerId, item.imei, item.imei);
         }
+
+        // ALWAYS decrement product qty on sale
+        decrementStockStmt.run(item.qty, item.productId);
 
         // Create Stock Movement Ledger entry if product exists in inventory
         const productExists = db.prepare("SELECT id FROM products WHERE id = ?").get(item.productId);
@@ -322,7 +345,7 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
             imei: item.imei,
             movementType: "SALE",
             quantity: -item.qty,
-            costPerUnit: item.costPrice,
+            costPerUnit: item.costPrice || 0,
             referenceId: saleId,
             notes: `Sold via POS Bill ${invoiceNo}`,
             createdBy: input.user || "Cashier",
@@ -537,9 +560,10 @@ export function voidSale(
     for (const item of items) {
       if (item.unit_id) {
         db.prepare("UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE id = ?").run(item.unit_id);
-      } else {
-        db.prepare("UPDATE products SET qty = qty + ? WHERE id = ?").run(item.qty, item.product_id);
+      } else if (item.imei) {
+        db.prepare("UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE (imei1 = ? OR imei2 = ?) AND sale_id = ?").run(item.imei, item.imei, saleId);
       }
+      db.prepare("UPDATE products SET qty = qty + ? WHERE id = ?").run(item.qty, item.product_id);
 
       recordStockMovement(db, {
         productId: item.product_id,

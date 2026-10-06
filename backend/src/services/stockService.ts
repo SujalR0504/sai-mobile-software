@@ -8,9 +8,10 @@ import { recordStockMovement } from "./stockMovementService";
 export function getProductStock(db: DatabaseSync, productId: string): number {
   const prod = db.prepare("SELECT tracked, qty FROM products WHERE id = ?").get(productId) as any;
   if (!prod) return 0;
-  if (!prod.tracked) return prod.qty;
-  const count = db.prepare("SELECT COUNT(*) as count FROM units WHERE product_id = ? AND status = 'available'").get(productId) as any;
-  return count ? count.count : 0;
+  const count = db.prepare("SELECT COUNT(*) as count FROM units WHERE product_id = ? AND (status = 'available' OR status = 'IN_STOCK')").get(productId) as any;
+  const unitCount = count ? count.count : 0;
+  if (unitCount > 0) return unitCount;
+  return prod.qty ?? 0;
 }
 
 export function addProduct(db: DatabaseSync, p: Omit<Product, "id"> & { id?: string; openingStock?: number }): Product {

@@ -43,6 +43,7 @@ function ReturnsPage() {
   const [selectedItems, setSelectedItems] = useState<LineItem[]>([]);
   const [purchaseSelectedItems, setPurchaseSelectedItems] = useState<LineItem[]>([]);
   const [selectedReturnInvoice, setSelectedReturnInvoice] = useState<ReturnDoc | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const customerMap = useMemo(() => new Map(db.customers.map((c) => [c.id, c])), [db.customers]);
   const supplierMap = useMemo(() => new Map(db.suppliers.map((s) => [s.id, s])), [db.suppliers]);
@@ -116,37 +117,53 @@ function ReturnsPage() {
     }
   };
 
-  const handleConfirmSaleReturn = (e: React.FormEvent) => {
+  const handleConfirmSaleReturn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSaleId || selectedItems.length === 0) return;
+    if (!selectedSaleId || selectedItems.length === 0 || isSubmitting) return;
     if (returnDestination === "DEALER" && !selectedDealerId) {
       alert("Please select a Dealer / Supplier to return the item to.");
       return;
     }
 
-    recordSaleReturn({
-      saleId: selectedSaleId,
-      items: selectedItems,
-      reason: returnReason,
-      mode: returnMode,
-      destination: returnDestination,
-      dealerId: returnDestination === "DEALER" ? selectedDealerId : undefined,
-    });
+    setIsSubmitting(true);
+    try {
+      await recordSaleReturn({
+        saleId: selectedSaleId,
+        items: selectedItems,
+        reason: returnReason,
+        mode: returnMode,
+        destination: returnDestination,
+        dealerId: returnDestination === "DEALER" ? selectedDealerId : undefined,
+      });
 
-    setSaleReturnModal(false);
+      setSaleReturnModal(false);
+      setReturnReason("");
+    } catch (err: any) {
+      alert(err?.message || "Failed to process sale return");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleConfirmPurchaseReturn = (e: React.FormEvent) => {
+  const handleConfirmPurchaseReturn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPurchaseId || purchaseSelectedItems.length === 0) return;
+    if (!selectedPurchaseId || purchaseSelectedItems.length === 0 || isSubmitting) return;
 
-    recordPurchaseReturn({
-      purchaseId: selectedPurchaseId,
-      items: purchaseSelectedItems,
-      reason: purchaseReturnReason,
-    });
+    setIsSubmitting(true);
+    try {
+      await recordPurchaseReturn({
+        purchaseId: selectedPurchaseId,
+        items: purchaseSelectedItems,
+        reason: purchaseReturnReason,
+      });
 
-    setPurchaseReturnModal(false);
+      setPurchaseReturnModal(false);
+      setPurchaseReturnReason("");
+    } catch (err: any) {
+      alert(err?.message || "Failed to process purchase return");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -417,8 +434,10 @@ function ReturnsPage() {
             <Button type="button" variant="ghost" onClick={() => setSaleReturnModal(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
-              {returnDestination === "INVENTORY"
+            <Button type="submit" variant="primary" disabled={isSubmitting}>
+              {isSubmitting
+                ? "Saving..."
+                : returnDestination === "INVENTORY"
                 ? "Confirm Return & Restock to Inventory"
                 : "Confirm Return & Send to Dealer"}
             </Button>
@@ -489,8 +508,8 @@ function ReturnsPage() {
             <Button type="button" variant="ghost" onClick={() => setPurchaseReturnModal(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary">
-              Confirm Dealer Return & Debit Ledger
+            <Button type="submit" variant="primary" disabled={isSubmitting}>
+              {isSubmitting ? "Saving..." : "Confirm Dealer Return & Debit Ledger"}
             </Button>
           </div>
         </form>

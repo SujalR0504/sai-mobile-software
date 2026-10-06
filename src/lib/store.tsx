@@ -155,12 +155,12 @@ interface StoreValue {
     mode: ReturnDoc["mode"];
     destination?: "INVENTORY" | "DEALER";
     dealerId?: string;
-  }) => void;
+  }) => Promise<void>;
   recordPurchaseReturn: (input: {
     purchaseId: string;
     items: LineItem[];
     reason: string;
-  }) => void;
+  }) => Promise<void>;
   addRepair: (r: Omit<Repair, "id" | "jobId" | "createdAt" | "status">) => Repair;
   setRepairStatus: (id: string, status: RepairStatus) => void;
   addExpense: (e: Omit<Expense, "id">) => void;
@@ -234,11 +234,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addCustomer: StoreValue["addCustomer"] = useCallback((c) => {
-    const created: Customer = { ...c, id: uid("c"), createdAt: todayISO() };
+    const created: Customer = { ...c, id: (c as any).id || uid("c"), createdAt: todayISO() };
     setDb((d) => ({ ...d, customers: [created, ...d.customers] }));
 
     customersApi
-      .addCustomer(c)
+      .addCustomer(created)
       .then((saved) => {
         if (saved) {
           setDb((d) => ({
@@ -247,7 +247,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }));
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to add customer on backend:", err);
+      });
 
     return created;
   }, []);
@@ -378,7 +380,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setDb((d) => {
         sale.invoiceNo = nextNo(d.settings.invoicePrefix, d.sales.map((s) => s.invoiceNo));
         const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id) && !quotation
+          items.some((i) => i.unitId === u.id || (i.imei && (i.imei === u.imei1 || i.imei === u.imei2))) && !quotation
             ? { ...u, status: "sold" as const, saleId: sale.id, customerId }
             : u,
         );
@@ -386,7 +388,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? d.products
           : d.products.map((p) => {
               const item = items.find((i) => i.productId === p.id);
-              return item && !p.tracked ? { ...p, qty: Math.max(0, p.qty - item.qty) } : p;
+              return item ? { ...p, qty: Math.max(0, p.qty - item.qty) } : p;
             });
         const newPayments: PaymentEntry[] = quotation
           ? []
@@ -445,7 +447,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             await refreshFromBackend();
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error("Backend salesApi.createSale error:", err);
+        });
 
       return sale;
     },
@@ -463,15 +467,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const recordSaleReturn: StoreValue["recordSaleReturn"] = useCallback(
-    ({ saleId, items, reason, mode, destination = "INVENTORY", dealerId }) => {
+    async ({ saleId, items, reason, mode, destination = "INVENTORY", dealerId }) => {
+      const isDealerReturn = destination === "DEALER";
+
       setDb((d) => {
-        const sale = d.sales.find((s) => s.id === saleId);
+        const sale = d.sales.find((s) => s.id === saleId || s.invoiceNo === saleId);
         if (!sale) return d;
         const amount = items.reduce((s, i) => s + i.price * i.qty, 0);
         const doc: ReturnDoc = {
           id: uid("ret"),
           type: "sale",
-          refId: saleId,
+          refId: sale.id,
           refNo: sale.invoiceNo,
           date: todayISO(),
           partyId: sale.customerId,
@@ -483,23 +489,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           dealerId,
         };
 
-        const isDealerReturn = destination === "DEALER";
-
-        const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id)
-            ? {
-                ...u,
-                status: isDealerReturn ? ("PURCHASE_RETURNED" as const) : ("available" as const),
-                saleId: undefined,
-                customerId: undefined,
-              }
-            : u,
-        );
+        const units = d.units.map((u) => {
+          const matched = items.some(
+            (i) => i.unitId === u.id || (i.imei && (u.imei1 === i.imei || u.imei2 === i.imei))
+          );
+          if (!matched) return u;
+          return {
+            ...u,
+            status: isDealerReturn ? ("PURCHASE_RETURNED" as const) : ("available" as const),
+            saleId: undefined,
+            customerId: undefined,
+          };
+        });
 
         const products = d.products.map((p) => {
-          const line = items.filter((i) => i.productId === p.id && !i.unitId);
-          if (!line.length || p.tracked) return p;
-          return isDealerReturn ? p : { ...p, qty: p.qty + line.reduce((s, i) => s + i.qty, 0) };
+          const line = items.filter((i) => i.productId === p.id);
+          if (!line.length || isDealerReturn) return p;
+          return { ...p, qty: p.qty + line.reduce((s, i) => s + i.qty, 0) };
         });
 
         const additionalReturns: ReturnDoc[] = [];
@@ -507,7 +513,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           additionalReturns.push({
             id: uid("ret"),
             type: "purchase",
-            refId: saleId,
+            refId: sale.id,
             refNo: `DR-${sale.invoiceNo}`,
             date: todayISO(),
             partyId: dealerId,
@@ -523,23 +529,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return { ...d, returns: [...additionalReturns, doc, ...d.returns], units, products };
       });
 
-      returnsApi
-        .recordSaleReturn({ saleId, items, reason, mode, destination, dealerId })
-        .catch(() => {});
+      try {
+        await returnsApi.recordSaleReturn({ saleId, items, reason, mode, destination, dealerId });
+      } catch (err) {
+        console.error("Backend recordSaleReturn failed:", err);
+        throw err;
+      } finally {
+        await refreshFromBackend();
+      }
     },
-    [],
+    [refreshFromBackend],
   );
 
   const recordPurchaseReturn: StoreValue["recordPurchaseReturn"] = useCallback(
-    ({ purchaseId, items, reason }) => {
+    async ({ purchaseId, items, reason }) => {
       setDb((d) => {
-        const pur = d.purchases.find((p) => p.id === purchaseId);
+        const pur = d.purchases.find((p) => p.id === purchaseId || p.invoiceNo === purchaseId);
         if (!pur) return d;
         const amount = items.reduce((s, i) => s + i.price * i.qty, 0);
         const doc: ReturnDoc = {
           id: uid("ret"),
           type: "purchase",
-          refId: purchaseId,
+          refId: pur.id,
           refNo: pur.invoiceNo,
           date: todayISO(),
           partyId: pur.supplierId,
@@ -547,21 +558,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           amount,
           reason,
           mode: "Credit Note",
+          destination: "DEALER",
+          dealerId: pur.supplierId,
         };
-        const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id) ? { ...u, status: "damaged" as const } : u,
-        );
+
+        const units = d.units.map((u) => {
+          const matched = items.some(
+            (i) => i.unitId === u.id || (i.imei && (u.imei1 === i.imei || u.imei2 === i.imei))
+          );
+          if (!matched) return u;
+          return { ...u, status: "PURCHASE_RETURNED" as const };
+        });
+
         const products = d.products.map((p) => {
-          const line = items.filter((i) => i.productId === p.id && !i.unitId);
-          if (!line.length || p.tracked) return p;
+          const line = items.filter((i) => i.productId === p.id);
+          if (!line.length) return p;
           return { ...p, qty: Math.max(0, p.qty - line.reduce((s, i) => s + i.qty, 0)) };
         });
+
         return { ...d, returns: [doc, ...d.returns], units, products };
       });
 
-      returnsApi.recordPurchaseReturn({ purchaseId, items, reason }).catch(() => {});
+      try {
+        await returnsApi.recordPurchaseReturn({ purchaseId, items, reason });
+      } catch (err) {
+        console.error("Backend recordPurchaseReturn failed:", err);
+        throw err;
+      } finally {
+        await refreshFromBackend();
+      }
     },
-    [],
+    [refreshFromBackend],
   );
 
   const addRepair: StoreValue["addRepair"] = useCallback(
@@ -753,10 +780,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const wipeAllData = useCallback(() => {
-    const clean = seedDB();
-    setDb(clean);
+    setDb((d) => ({
+      ...d,
+      products: [],
+      units: [],
+      sales: [],
+      purchases: [],
+      purchaseAttachments: [],
+      creditNotes: [],
+      debitNotes: [],
+      returns: [],
+      repairs: [],
+      expenses: [],
+      payments: [],
+      quotations: [],
+      employees: [],
+      attendance: [],
+      payroll: [],
+      stockMovements: [],
+      customerLedger: [],
+      supplierLedger: [],
+      cashbook: [],
+      auditLogs: [],
+      orders: [],
+      customers: [{ id: "c0", name: "Cash / Walk-in Customer", phone: "9999999999", createdAt: todayISO() }],
+      suppliers: [],
+    }));
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+      localStorage.removeItem(STORAGE_KEY);
     } catch {}
 
     settingsApi
@@ -769,7 +820,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           } catch {}
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to wipe data on backend:", err);
+      });
   }, []);
 
   const createOrder = useCallback(
@@ -982,10 +1035,11 @@ export function useStore() {
 /* ---------- derived helpers ---------- */
 
 export const stockOf = (db: DB, productId: string) => {
-  const p = db.products.find((x) => x.id === productId);
+  const p = (db.products || []).find((x) => x.id === productId);
   if (!p) return 0;
-  if (!p.tracked) return p.qty;
-  return db.units.filter((u) => u.productId === productId && u.status === "available").length;
+  if (!p.tracked) return p.qty ?? 0;
+  const availableUnits = (db.units || []).filter((u) => u.productId === productId && (u.status === "available" || u.status === "IN_STOCK")).length;
+  return availableUnits > 0 ? availableUnits : (p.qty ?? 0);
 };
 
 export const customerDue = (db: DB, customerId: string) => {

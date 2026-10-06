@@ -573,6 +573,8 @@ export function getReturns(db: DatabaseSync): ReturnDoc[] {
     reason: r.reason,
     condition: r.condition,
     mode: r.mode as "Refund" | "Credit Note",
+    destination: (r.destination || "INVENTORY") as "INVENTORY" | "DEALER",
+    dealerId: r.dealer_id || undefined,
   }));
 }
 

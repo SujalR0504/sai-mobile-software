@@ -322,7 +322,9 @@ export function initSchema(db: DatabaseSync): void {
       amount REAL NOT NULL,
       reason TEXT NOT NULL,
       condition TEXT DEFAULT 'GOOD',
-      mode TEXT NOT NULL
+      mode TEXT NOT NULL,
+      destination TEXT DEFAULT 'INVENTORY',
+      dealer_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS return_items (
@@ -897,6 +899,8 @@ export function runMigrations(db: DatabaseSync): void {
   addColumnIfNotExists(db, "returns", "business_id", "TEXT");
   addColumnIfNotExists(db, "returns", "branch_id", "TEXT");
   addColumnIfNotExists(db, "returns", "condition", "TEXT DEFAULT 'GOOD'");
+  addColumnIfNotExists(db, "returns", "destination", "TEXT DEFAULT 'INVENTORY'");
+  addColumnIfNotExists(db, "returns", "dealer_id", "TEXT");
 
   addColumnIfNotExists(db, "return_items", "gst", "REAL NOT NULL DEFAULT 0");
   addColumnIfNotExists(db, "return_items", "cost_price", "REAL NOT NULL DEFAULT 0");
@@ -2003,8 +2007,15 @@ export function wipeAllData(db: DatabaseSync): void {
     DELETE FROM emi_schedules;
     DELETE FROM emi_accounts;
     DELETE FROM emi_receipts;
-    DELETE FROM emi_receivables;
     DELETE FROM finance_companies;
+    INSERT OR REPLACE INTO finance_companies (id, business_id, company_name, contact_person, mobile, settlement_days, processing_fee, active, created_at)
+    VALUES
+      ('fc_bajaj', 'biz_default', 'Bajaj Finserv', 'Rajesh Khanna', '9811001122', 5, 250, 1, datetime('now')),
+      ('fc_hdb', 'biz_default', 'HDB Financial Services', 'Amitabh Sen', '9822002233', 7, 300, 1, datetime('now')),
+      ('fc_tvs', 'biz_default', 'TVS Credit', 'Sundaram Iyer', '9833003344', 7, 200, 1, datetime('now')),
+      ('fc_idfc', 'biz_default', 'IDFC First Bank', 'Priya Sharma', '9844004455', 3, 150, 1, datetime('now')),
+      ('fc_dmi', 'biz_default', 'DMI Finance', 'Rohit Malhotra', '9855005566', 7, 250, 1, datetime('now'));
+    DELETE FROM emi_receivables;
     DELETE FROM sale_payments;
     DELETE FROM sale_items;
     DELETE FROM sales;
