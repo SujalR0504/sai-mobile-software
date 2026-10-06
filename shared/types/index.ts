@@ -683,6 +683,10 @@ export interface LineItem {
   gst: number;
   costPrice: number;
   warrantyMonths?: number;
+  // Direct/manual billing flags. Manual items normally bypass inventory;
+  // an entered IMEI can still resolve to a real inventory unit on sale.
+  isManual?: boolean;
+  bypassStock?: boolean;
   // Purchase 18-column ERP fields
   hsnSac?: string;
   unit?: string;

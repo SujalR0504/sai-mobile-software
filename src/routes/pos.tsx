@@ -182,16 +182,9 @@ function POS() {
     { id: "2", mode: "UPI", paymentAccountId: "", amount: 0, referenceNumber: "" },
   ]);
 
-  // Predefined default finance partners so POS EMI is always ready without delay
-  const DEFAULT_EMI_COMPANIES = [
-    { id: "fc_bajaj", companyName: "Bajaj Finserv" },
-    { id: "fc_hdb", companyName: "HDB Financial Services" },
-    { id: "fc_idfc", companyName: "IDFC First Bank" },
-  ];
-
   // EMI Finance State
-  const [emiCompanies, setEmiCompanies] = useState<Array<{ id: string; companyName: string }>>(DEFAULT_EMI_COMPANIES);
-  const [selectedEmiCompany, setSelectedEmiCompany] = useState<string>("fc_bajaj");
+  const [emiCompanies, setEmiCompanies] = useState<Array<{ id: string; companyName: string }>>([]);
+  const [selectedEmiCompany, setSelectedEmiCompany] = useState<string>("");
   const [emiDownPayment, setEmiDownPayment] = useState<number>(0);
   const [emiDownPaymentMode, setEmiDownPaymentMode] = useState<"Cash" | "UPI" | "Card">("Cash");
   const [emiReference, setEmiReference] = useState<string>("");
@@ -237,9 +230,12 @@ function POS() {
     fetch("/api/emi/companies")
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setEmiCompanies(data);
-          setSelectedEmiCompany((prev) => prev || data[0].id);
+          setSelectedEmiCompany(data[0]?.id || "");
+        } else {
+          setEmiCompanies([]);
+          setSelectedEmiCompany("");
         }
       })
       .catch(() => {});

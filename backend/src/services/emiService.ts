@@ -666,11 +666,24 @@ export function createEMIAccountAndSchedule(
   const totalPayable = calc.totalPayable;
   const outstandingAmount = totalPayable;
 
-  let companyName = input.financeCompanyName;
-  if (!companyName && input.financeCompanyId) {
-    const comp = db.prepare("SELECT company_name FROM finance_companies WHERE id = ?").get(input.financeCompanyId) as any;
-    companyName = comp?.company_name;
+  if (!input.financeCompanyId) {
+    throw new Error("Finance/EMI Company is required to create an EMI account.");
   }
+
+  const financeCompany = db.prepare(`
+    SELECT id, company_name
+    FROM finance_companies
+    WHERE id = ? AND active = 1
+  `).get(input.financeCompanyId) as {
+    id: string;
+    company_name: string;
+  } | undefined;
+
+  if (!financeCompany) {
+    throw new Error("Selected Finance/EMI Company is invalid or inactive.");
+  }
+
+  const companyName = financeCompany.company_name;
 
   // 1. Insert EMI Account
   const insertAcct = db.prepare(`

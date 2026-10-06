@@ -59,6 +59,7 @@ import {
   Building2,
   Receipt,
   Package,
+  Sparkles,
 } from "lucide-react";
 
 export const Route = createFileRoute("/orders")({

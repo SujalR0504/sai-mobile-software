@@ -379,16 +379,63 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       setDb((d) => {
         sale.invoiceNo = nextNo(d.settings.invoicePrefix, d.sales.map((s) => s.invoiceNo));
-        const units = d.units.map((u) =>
-          items.some((i) => i.unitId === u.id || (i.imei && (i.imei === u.imei1 || i.imei === u.imei2))) && !quotation
+        const units = d.units.map((u) => {
+          if (quotation) return u;
+
+          const item = items.find((i) => {
+            if (i.bypassStock || i.isManual) {
+              return Boolean(
+                i.imei &&
+                (i.imei === u.imei1 || i.imei === u.imei2)
+              );
+            }
+
+            return (
+              i.unitId === u.id ||
+              Boolean(
+                i.imei &&
+                (i.imei === u.imei1 || i.imei === u.imei2)
+              )
+            );
+          });
+
+          return item
             ? { ...u, status: "sold" as const, saleId: sale.id, customerId }
-            : u,
-        );
+            : u;
+        });
+
         const products = quotation
           ? d.products
           : d.products.map((p) => {
-              const item = items.find((i) => i.productId === p.id);
-              return item ? { ...p, qty: Math.max(0, p.qty - item.qty) } : p;
+              const inventoryItem = items.find(
+                (i) =>
+                  !i.bypassStock &&
+                  !i.isManual &&
+                  i.productId === p.id
+              );
+
+              const manualInventoryItem = items.find((i) => {
+                if (!(i.bypassStock || i.isManual) || !i.imei) {
+                  return false;
+                }
+
+                const unit = d.units.find(
+                  (u) =>
+                    u.imei1 === i.imei ||
+                    u.imei2 === i.imei
+                );
+
+                return unit?.productId === p.id;
+              });
+
+              const item = inventoryItem || manualInventoryItem;
+
+              return item
+                ? {
+                    ...p,
+                    qty: Math.max(0, p.qty - item.qty),
+                  }
+                : p;
             });
         const newPayments: PaymentEntry[] = quotation
           ? []

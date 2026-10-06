@@ -125,6 +125,16 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       }
     }
 
+    const emiCompany = db.prepare(`
+      SELECT id, company_name
+      FROM finance_companies
+      WHERE id = ? AND active = 1
+    `).get(emiCompanyId) as { id: string; company_name: string } | undefined;
+
+    if (!emiCompany) {
+      throw new Error("Selected Finance/EMI Company is invalid or inactive. Please select a valid Finance Company.");
+    }
+
     if (input.emiDownPayment !== undefined) {
       if (input.emiDownPayment < 0) {
         throw new Error("Down payment cannot be negative.");
@@ -213,9 +223,72 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
   // Execute in transaction (Requirement 28)
   db.exec("BEGIN TRANSACTION;");
   try {
+    // Resolve/validate inventory references before creating the financial record.
+    // Manual/service items normally bypass stock. However, if a manual bill
+    // contains an existing IMEI, convert it to the real inventory unit/product
+    // so Stock & Serial Tracker remains accurate.
+    if (!isQuotation) {
+      for (const item of input.items) {
+        const bypassStock = Boolean(item.bypassStock || item.isManual);
+
+        if (bypassStock && item.imei) {
+          const matchingUnit = db.prepare(`
+            SELECT id, product_id, imei1, imei2, status, purchase_price
+            FROM units
+            WHERE (imei1 = ? OR imei2 = ?)
+            LIMIT 1
+          `).get(item.imei, item.imei) as any;
+
+          if (!matchingUnit) {
+            throw new Error(
+              `IMEI ${item.imei} was entered in the manual bill but was not found in inventory.`
+            );
+          }
+
+          if (matchingUnit.status !== "available" && matchingUnit.status !== "IN_STOCK") {
+            throw new Error(
+              `IMEI ${item.imei} is not available (Current status: ${matchingUnit.status})`
+            );
+          }
+
+          item.productId = matchingUnit.product_id;
+          item.unitId = matchingUnit.id;
+          item.costPrice = item.costPrice || matchingUnit.purchase_price || 0;
+          item.bypassStock = false;
+          item.isManual = false;
+        }
+
+        const shouldTouchInventory = !Boolean(item.bypassStock || item.isManual);
+
+        if (shouldTouchInventory) {
+          const product = db.prepare(
+            "SELECT id, qty FROM products WHERE id = ?"
+          ).get(item.productId) as any;
+
+          if (!product) {
+            throw new Error(
+              `Product "${item.name}" (${item.productId}) was not found in inventory.`
+            );
+          }
+
+          if (item.qty <= 0) {
+            throw new Error(`Invalid quantity for "${item.name}".`);
+          }
+
+          if (product.qty < item.qty && !item.unitId && !item.imei) {
+            throw new Error(
+              `Insufficient stock for "${item.name}". Available: ${product.qty}, requested: ${item.qty}.`
+            );
+          }
+        }
+      }
+    }
+
     // Validate unit availability and stock
     if (!isQuotation) {
       for (const item of input.items) {
+        if (item.bypassStock || item.isManual) continue;
+
         if (item.unitId) {
           let unit = db.prepare("SELECT id, imei1, status, purchase_price FROM units WHERE id = ?").get(item.unitId) as any;
           if (!unit && item.imei) {
@@ -317,7 +390,8 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       const updateUnitByImeiStmt = db.prepare(`
         UPDATE units
         SET status = 'sold', sale_id = ?, customer_id = ?
-        WHERE (imei1 = ? OR imei2 = ?) AND status = 'available'
+        WHERE (imei1 = ? OR imei2 = ?)
+          AND status IN ('available', 'IN_STOCK')
       `);
 
       const decrementStockStmt = db.prepare(`
@@ -327,30 +401,63 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       `);
 
       for (const item of input.items) {
+        // Direct/manual items without an inventory reference are intentionally
+        // excluded from stock. If a manual item contains an existing IMEI,
+        // the pre-validation above resolves it to a real product/unit and
+        // clears these flags before reaching this block.
+        if (item.bypassStock || item.isManual) {
+          continue;
+        }
+
         if (item.unitId) {
-          updateUnitStmt.run(saleId, input.customerId, item.unitId);
+          const result = updateUnitStmt.run(
+            saleId,
+            input.customerId,
+            item.unitId
+          );
+
+          if (result.changes !== 1) {
+            throw new Error(
+              `Inventory unit ${item.unitId} could not be marked as sold.`
+            );
+          }
         } else if (item.imei) {
-          updateUnitByImeiStmt.run(saleId, input.customerId, item.imei, item.imei);
+          const result = updateUnitByImeiStmt.run(
+            saleId,
+            input.customerId,
+            item.imei,
+            item.imei
+          );
+
+          if (result.changes !== 1) {
+            throw new Error(
+              `IMEI ${item.imei} could not be marked as sold.`
+            );
+          }
         }
 
-        // ALWAYS decrement product qty on sale
-        decrementStockStmt.run(item.qty, item.productId);
+        const productResult = decrementStockStmt.run(
+          item.qty,
+          item.productId
+        );
 
-        // Create Stock Movement Ledger entry if product exists in inventory
-        const productExists = db.prepare("SELECT id FROM products WHERE id = ?").get(item.productId);
-        if (productExists) {
-          recordStockMovement(db, {
-            productId: item.productId,
-            unitId: item.unitId,
-            imei: item.imei,
-            movementType: "SALE",
-            quantity: -item.qty,
-            costPerUnit: item.costPrice || 0,
-            referenceId: saleId,
-            notes: `Sold via POS Bill ${invoiceNo}`,
-            createdBy: input.user || "Cashier",
-          });
+        if (productResult.changes !== 1) {
+          throw new Error(
+            `Inventory quantity for "${item.name}" could not be updated.`
+          );
         }
+
+        recordStockMovement(db, {
+          productId: item.productId,
+          unitId: item.unitId,
+          imei: item.imei,
+          movementType: "SALE",
+          quantity: -item.qty,
+          costPerUnit: item.costPrice || 0,
+          referenceId: saleId,
+          notes: `Sold via POS Bill ${invoiceNo}`,
+          createdBy: input.user || "Cashier",
+        });
       }
 
       // If EMI, create EMI receivable record only if financed amount > 0
@@ -556,14 +663,34 @@ export function voidSale(
       db.prepare("UPDATE emi_receivables SET status = 'CANCELLED' WHERE id = ?").run(sale.emi_receivable_id);
     }
 
-    // Restore stock & units
+    // Restore inventory only for real inventory-backed sale items.
     for (const item of items) {
-      if (item.unit_id) {
-        db.prepare("UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE id = ?").run(item.unit_id);
+      const productExists = db.prepare(
+        "SELECT id FROM products WHERE id = ?"
+      ).get(item.product_id);
+
+      const unitExists = item.unit_id
+        ? db.prepare("SELECT id FROM units WHERE id = ?").get(item.unit_id)
+        : null;
+
+      if (item.unit_id && unitExists) {
+        db.prepare(
+          "UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE id = ?"
+        ).run(item.unit_id);
       } else if (item.imei) {
-        db.prepare("UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE (imei1 = ? OR imei2 = ?) AND sale_id = ?").run(item.imei, item.imei, saleId);
+        db.prepare(
+          "UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE (imei1 = ? OR imei2 = ?) AND sale_id = ?"
+        ).run(item.imei, item.imei, saleId);
       }
-      db.prepare("UPDATE products SET qty = qty + ? WHERE id = ?").run(item.qty, item.product_id);
+
+      if (!productExists) {
+        // Historical/direct manual item with no catalog product.
+        continue;
+      }
+
+      db.prepare(
+        "UPDATE products SET qty = qty + ? WHERE id = ?"
+      ).run(item.qty, item.product_id);
 
       recordStockMovement(db, {
         productId: item.product_id,
