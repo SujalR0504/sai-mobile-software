@@ -251,6 +251,7 @@ function CustomersPage() {
         ) : (
           <Table head={["Customer Name", "Phone Number", "Address", ">Total Invoices", ">Current Due", "Actions"]}>
             {filtered.map((c) => {
+              const due = customerDue(db, c.id);
               const custPhone = c.phone || c.mobile;
               const salesCount = (db.sales || []).filter((s) => {
                 if (s.quotation) return false;
