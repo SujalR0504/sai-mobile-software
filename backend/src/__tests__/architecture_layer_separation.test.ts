@@ -68,7 +68,11 @@ describe("Commercial Mobile Shop ERP - Clean Architecture & Layer Separation", (
   });
 
   it("Backend Tier: Dealer due and outstanding balance calculation is strictly performed on backend", () => {
-    const sup = db.prepare("SELECT id FROM suppliers LIMIT 1").get() as any;
+    let sup = db.prepare("SELECT id FROM suppliers LIMIT 1").get() as any;
+    if (!sup) {
+      db.prepare("INSERT INTO suppliers (id, name, phone) VALUES (?, ?, ?)").run("sup_test", "Test Dealer", "9999999999");
+      sup = { id: "sup_test" };
+    }
     expect(sup).toBeDefined();
 
     const dueAmount = getSupplierDue(db, sup.id);

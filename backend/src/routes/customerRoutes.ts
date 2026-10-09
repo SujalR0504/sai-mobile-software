@@ -1,11 +1,13 @@
 import { getCustomerLedger, getCustomers } from "../repositories/repository";
 import {
   addCustomer,
+  deleteCustomer,
   getCustomerDue,
   getCustomerOutstandingBreakdown,
   recordCustomerPayment,
   updateCustomer,
 } from "../services/duesAndPaymentsService";
+import { checkEmployeePermission } from "../services/permissionService";
 import { errorResponse, jsonResponse, type RouteContext } from "./types";
 
 export async function customerRoutes({ request, pathname, method, db }: RouteContext): Promise<Response | null> {
@@ -55,12 +57,42 @@ export async function customerRoutes({ request, pathname, method, db }: RouteCon
     }
   }
 
-  // Update customer
+// Update or Delete customer
   const customerMatch = pathname.match(/^\/api\/customers\/([^/]+)$/);
-  if (customerMatch && method === "PATCH") {
+  if (customerMatch) {
     const id = customerMatch[1];
-    const body = await request.json();
-    return jsonResponse(updateCustomer(db, id, body));
+    if (method === "PATCH") {
+      const body = await request.json();
+      return jsonResponse(updateCustomer(db, id, body));
+    }
+    if (method === "DELETE") {
+      const url = new URL(request.url);
+      let force = url.searchParams.get("force") === "true";
+      let user = "Admin";
+      let employeeId = request.headers.get("x-employee-id") || request.headers.get("x-user-id") || undefined;
+
+      // Also allow reading force / employee info from JSON body if present
+      try {
+        const body = await request.json();
+        if (body?.force !== undefined) force = Boolean(body.force);
+        if (body?.employeeId) employeeId = body.employeeId;
+        if (body?.user) user = body.user;
+      } catch {
+        // empty body ok
+      }
+
+      // Check permission if employee provided
+      if (employeeId && !checkEmployeePermission(db, employeeId, "Customers", "DELETE")) {
+        return errorResponse("User does not have permission to delete customers (Customers:DELETE required)", 403, "FORBIDDEN");
+      }
+
+      try {
+        const result = deleteCustomer(db, id, force, user);
+        return jsonResponse(result);
+      } catch (err: any) {
+        return errorResponse(err.message || "Failed to delete customer", 400, "BAD_REQUEST");
+      }
+    }
   }
 
   return null;

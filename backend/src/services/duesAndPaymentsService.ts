@@ -1,6 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { uid, todayISO } from "../../../shared/utils/format";
 import type { Customer, Expense, ExpenseCategory, PaymentEntry, PaymentMode, Supplier } from "../../../shared/types";
+import { logAudit } from "./auditService";
+import { getDefaultCashAccount, getPaymentAccountById, recordAccountTransaction } from "./paymentAccountService";
+import { recordCustomerLedger, recordSupplierLedger } from "./ledgerService";
 
 export function addCustomer(db: DatabaseSync, c: Omit<Customer, "id" | "createdAt"> & { id?: string }): Customer {
   const id = c.id || uid("c");
@@ -34,6 +37,106 @@ export function updateCustomer(db: DatabaseSync, id: string, patch: Partial<Cust
   `);
   stmt.run(updated.name, updated.phone, updated.address ?? null, id);
   return updated;
+}
+
+export function deleteCustomer(
+  db: DatabaseSync,
+  id: string,
+  force = false,
+  user = "Admin"
+): { success: boolean; id: string; name: string } {
+  const cust = db.prepare("SELECT * FROM customers WHERE id = ?").get(id) as any;
+  if (!cust) {
+    throw new Error(`Customer with ID '${id}' not found`);
+  }
+
+  // Check linked transactions
+  const salesCount = (db.prepare("SELECT COUNT(*) as cnt FROM sales WHERE customer_id = ?").get(id) as any)?.cnt || 0;
+  const ledgerCount = (db.prepare("SELECT COUNT(*) as cnt FROM customer_ledger WHERE customer_id = ?").get(id) as any)?.cnt || 0;
+  const paymentsCount = (db.prepare("SELECT COUNT(*) as cnt FROM payments WHERE party = 'customer' AND party_id = ?").get(id) as any)?.cnt || 0;
+  const creditNotesCount = (db.prepare("SELECT COUNT(*) as cnt FROM credit_notes WHERE customer_id = ?").get(id) as any)?.cnt || 0;
+  const repairsCount = (db.prepare("SELECT COUNT(*) as cnt FROM repairs WHERE customer_id = ?").get(id) as any)?.cnt || 0;
+  const emiAccountsCount = (db.prepare("SELECT COUNT(*) as cnt FROM emi_accounts WHERE customer_id = ?").get(id) as any)?.cnt || 0;
+  const due = getCustomerDue(db, id);
+
+  const totalBlockers = salesCount + ledgerCount + paymentsCount + creditNotesCount + repairsCount + emiAccountsCount;
+
+  if ((totalBlockers > 0 || due > 0) && !force) {
+    const reasons: string[] = [];
+    if (salesCount > 0) reasons.push(`${salesCount} sales bill(s)`);
+    if (due > 0) reasons.push(`outstanding balance of ₹${due}`);
+    if (ledgerCount > 0) reasons.push(`${ledgerCount} ledger record(s)`);
+    if (paymentsCount > 0) reasons.push(`${paymentsCount} payment transaction(s)`);
+    if (creditNotesCount > 0) reasons.push(`${creditNotesCount} credit note(s)`);
+    if (repairsCount > 0) reasons.push(`${repairsCount} repair job(s)`);
+    if (emiAccountsCount > 0) reasons.push(`${emiAccountsCount} EMI account(s)`);
+
+    throw new Error(
+      `Cannot delete customer '${cust.name}' because they have active transaction history: ${reasons.join(", ")}. Please clear balance or confirm force delete.`
+    );
+  }
+
+  db.exec("BEGIN TRANSACTION;");
+  try {
+    if (force) {
+      // 1. Delete payment records for this customer
+      db.prepare("DELETE FROM payments WHERE (party = 'customer' AND party_id = ?) OR ref_id IN (SELECT id FROM sales WHERE customer_id = ?)").run(id, id);
+      // 2. Delete credit notes
+      db.prepare("DELETE FROM credit_notes WHERE customer_id = ?").run(id);
+      // 3. Delete customer ledger
+      db.prepare("DELETE FROM customer_ledger WHERE customer_id = ?").run(id);
+      // 4. Delete repair jobs and parts
+      const repairs = db.prepare("SELECT id FROM repairs WHERE customer_id = ?").all(id) as any[];
+      for (const r of repairs) {
+        db.prepare("DELETE FROM repair_parts WHERE repair_id = ?").run(r.id);
+      }
+      db.prepare("DELETE FROM repairs WHERE customer_id = ?").run(id);
+      // 5. Delete EMI schedules, accounts and receivables
+      const emiAccs = db.prepare("SELECT id FROM emi_accounts WHERE customer_id = ?").all(id) as any[];
+      for (const ea of emiAccs) {
+        db.prepare("DELETE FROM emi_schedules WHERE emi_account_id = ?").run(ea.id);
+        db.prepare("DELETE FROM emi_payments WHERE emi_account_id = ?").run(ea.id);
+      }
+      db.prepare("DELETE FROM emi_accounts WHERE customer_id = ?").run(id);
+
+      const emiRecs = db.prepare("SELECT id FROM emi_receivables WHERE customer_id = ?").all(id) as any[];
+      for (const er of emiRecs) {
+        db.prepare("DELETE FROM emi_receipts WHERE receivable_id = ?").run(er.id);
+      }
+      db.prepare("DELETE FROM emi_receivables WHERE customer_id = ?").run(id);
+
+      // 6. Delete sales, sale_items, and sale_payments
+      const sales = db.prepare("SELECT id FROM sales WHERE customer_id = ?").all(id) as any[];
+      for (const s of sales) {
+        db.prepare("DELETE FROM sale_items WHERE sale_id = ?").run(s.id);
+        db.prepare("DELETE FROM sale_payments WHERE sale_id = ?").run(s.id);
+      }
+      db.prepare("DELETE FROM sales WHERE customer_id = ?").run(id);
+      // 7. Unlink any sold units from this customer and restore stock status
+      db.prepare("UPDATE units SET status = 'IN_STOCK', sale_id = NULL, customer_id = NULL WHERE customer_id = ?").run(id);
+    }
+
+    // 8. Delete customer
+    db.prepare("DELETE FROM customers WHERE id = ?").run(id);
+
+    // 9. Audit Log
+    logAudit(db, {
+      userId: user,
+      userName: user,
+      action: "CUSTOMER_DELETE",
+      module: "Customers",
+      recordId: id,
+      oldValue: { name: cust.name, phone: cust.phone, address: cust.address },
+      newValue: { deleted: true, force },
+      reason: `Customer ${cust.name} deleted${force ? " (force delete)" : ""}`,
+    });
+
+    db.exec("COMMIT;");
+    return { success: true, id, name: cust.name };
+  } catch (error) {
+    db.exec("ROLLBACK;");
+    throw error;
+  }
 }
 
 export function addSupplier(db: DatabaseSync, s: Omit<Supplier, "id"> & { id?: string }): Supplier {
@@ -99,11 +202,6 @@ export function updateSupplier(db: DatabaseSync, id: string, patch: Partial<Supp
   );
   return updated;
 }
-
-
-import { getDefaultCashAccount, getPaymentAccountById, recordAccountTransaction } from "./paymentAccountService";
-import { recordCustomerLedger, recordSupplierLedger } from "./ledgerService";
-import { logAudit } from "./auditService";
 
 export interface CustomerPaymentInput {
   customerId: string;

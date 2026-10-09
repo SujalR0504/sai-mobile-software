@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Badge,
   Button,
@@ -26,7 +26,9 @@ import {
 } from "@/lib/whatsapp";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
-import { Eye, FileText } from "lucide-react";
+import { Eye, FileText, Trash2, AlertTriangle } from "lucide-react";
+import { permissionsApi } from "@/services/api/permissionsApi";
+import { CancelSaleBillModal } from "@/components/sales/CancelSaleBillModal";
 
 export const Route = createFileRoute("/customers")({
   head: () => ({
@@ -36,7 +38,7 @@ export const Route = createFileRoute("/customers")({
 });
 
 function CustomersPage() {
-  const { db, addCustomer, updateCustomer, recordCustomerPayment } = useStore();
+  const { db, addCustomer, updateCustomer, deleteCustomer, recordCustomerPayment } = useStore();
   const [query, setQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -44,6 +46,35 @@ function CustomersPage() {
   const [targetCustomer, setTargetCustomer] = useState<Customer | null>(null);
   const [ledgerCustomer, setLedgerCustomer] = useState<Customer | null>(null);
   const [ledgerModalOpen, setLedgerModalOpen] = useState(false);
+
+  // Delete Customer State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
+  const [forceDeleteConfirm, setForceDeleteConfirm] = useState(false);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const openDeleteModal = (c: Customer) => {
+    setCustomerToDelete(c);
+    setForceDeleteConfirm(false);
+    setDeleteError("");
+    setDeleteModalOpen(true);
+  };
+
+  const handleConfirmDeleteCustomer = async () => {
+    if (!customerToDelete) return;
+    setIsDeletingCustomer(true);
+    setDeleteError("");
+    try {
+      await deleteCustomer(customerToDelete.id, forceDeleteConfirm);
+      setDeleteModalOpen(false);
+      setCustomerToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.message || "Failed to delete customer");
+    } finally {
+      setIsDeletingCustomer(false);
+    }
+  };
 
   // Customer Bills Modal State
   const [billsCustomer, setBillsCustomer] = useState<Customer | null>(null);
@@ -60,7 +91,7 @@ function CustomersPage() {
     const custPhone = billsCustomer.phone || billsCustomer.mobile;
     return (db.sales || [])
       .filter((s) => {
-        if (s.quotation) return false;
+        if (s.quotation || s.status === "CANCELLED" || s.status === "VOID") return false;
         if (s.customerId === billsCustomer.id) return true;
         if (custPhone && custPhone !== "9999999999") {
           const matchedCust = (db.customers || []).find((c) => c.id === s.customerId);
@@ -73,6 +104,59 @@ function CustomersPage() {
       .slice()
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [db.sales, billsCustomer, db.customers]);
+
+  const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+
+  // User & permissions check
+  const currentUser = useMemo(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("erp_user");
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
+  const role = currentUser?.role?.toUpperCase() || "ADMIN";
+  const [canDeleteBill, setCanDeleteBill] = useState(
+    role === "ADMIN" || role === "OWNER"
+  );
+  const [canDeleteCustomer, setCanDeleteCustomer] = useState(
+    role === "ADMIN" || role === "OWNER"
+  );
+
+  useEffect(() => {
+    if (role === "ADMIN" || role === "OWNER") {
+      setCanDeleteBill(true);
+      setCanDeleteCustomer(true);
+      return;
+    }
+    if (currentUser?.employeeId || currentUser?.id) {
+      const empId = currentUser.employeeId || currentUser.id;
+      permissionsApi.checkPermission(empId, "Sales", "DELETE")
+        .then((res) => {
+          setCanDeleteBill(res.allowed);
+        })
+        .catch(() => {
+          setCanDeleteBill(false);
+        });
+
+      permissionsApi.checkPermission(empId, "Customers", "DELETE")
+        .then((res) => {
+          setCanDeleteCustomer(res.allowed);
+        })
+        .catch(() => {
+          setCanDeleteCustomer(false);
+        });
+    } else {
+      setCanDeleteBill(false);
+      setCanDeleteCustomer(false);
+    }
+  }, [currentUser, role]);
 
   const [form, setForm] = useState({ name: "", phone: "", address: "" });
   const [payAmount, setPayAmount] = useState(0);
@@ -328,6 +412,18 @@ function CustomersPage() {
                       <Button size="sm" variant="ghost" onClick={() => openEditModal(c)}>
                         Edit
                       </Button>
+                      {canDeleteCustomer && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-1 px-2 font-medium"
+                          onClick={() => openDeleteModal(c)}
+                          title="Delete Customer"
+                        >
+                          <Trash2 className="size-3" />
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </Td>
                 </Row>
@@ -654,13 +750,29 @@ function CustomersPage() {
                           </Badge>
                         </td>
                         <td className="py-2.5 px-3 text-right">
-                          <Button
-                            size="sm"
-                            onClick={() => setSelectedSaleForInvoice(s)}
-                            className="h-6.5 px-2 text-xs font-bold gap-1 bg-primary text-primary-foreground shadow-xs"
-                          >
-                            <Eye className="size-3" /> View Bill
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              onClick={() => setSelectedSaleForInvoice(s)}
+                              className="h-6.5 px-2 text-xs font-bold gap-1 bg-primary text-primary-foreground shadow-xs"
+                            >
+                              <Eye className="size-3" /> View Bill
+                            </Button>
+                            {canDeleteBill && (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => {
+                                  setSaleToCancel(s);
+                                  setCancelModalOpen(true);
+                                }}
+                                className="h-6.5 px-2 text-xs font-bold gap-1 bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-xs"
+                                title="Cancel / Delete Sale Bill"
+                              >
+                                <Trash2 className="size-3" /> Cancel Bill
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -686,6 +798,118 @@ function CustomersPage() {
           {...saleToInvoiceProps(selectedSaleForInvoice, db)}
         />
       )}
+
+      {/* CANCEL SALE BILL MODAL */}
+      <CancelSaleBillModal
+        open={cancelModalOpen}
+        onClose={() => {
+          setCancelModalOpen(false);
+          setSaleToCancel(null);
+        }}
+        sale={saleToCancel}
+        customerName={billsCustomer?.name}
+        onSuccess={() => {
+          setCancelModalOpen(false);
+          setSaleToCancel(null);
+        }}
+      />
+
+      {/* DELETE CUSTOMER CONFIRMATION MODAL */}
+      <Modal
+        open={deleteModalOpen}
+        onClose={() => {
+          if (!isDeletingCustomer) {
+            setDeleteModalOpen(false);
+            setCustomerToDelete(null);
+          }
+        }}
+        title={`Delete Customer — ${customerToDelete?.name || ""}`}
+      >
+        {customerToDelete && (() => {
+          const due = customerDue(db, customerToDelete.id);
+          const bills = (db.sales || []).filter(
+            (s) => (s.customerId === customerToDelete.id || (customerToDelete.phone && (db.customers || []).find((c) => c.id === s.customerId)?.phone === customerToDelete.phone)) &&
+                   s.status !== "CANCELLED" && s.status !== "VOID"
+          );
+          const hasTransactions = bills.length > 0 || due > 0;
+
+          return (
+            <div className="space-y-3.5">
+              <div className="p-3 rounded-xl bg-muted/40 border border-border text-[12px] space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="font-bold text-sm text-foreground">{customerToDelete.name}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{customerToDelete.phone}</span>
+                </div>
+                {customerToDelete.address && (
+                  <div className="text-muted-foreground text-[11px]">{customerToDelete.address}</div>
+                )}
+                <div className="flex items-center justify-between pt-1 border-t border-border/60 text-[11px]">
+                  <span className="text-muted-foreground">Total Invoices: <strong>{bills.length} bills</strong></span>
+                  <span className={due > 0 ? "text-destructive font-bold" : "text-emerald-600 font-semibold"}>
+                    Outstanding Due: {inr(due)}
+                  </span>
+                </div>
+              </div>
+
+              {hasTransactions ? (
+                <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-[11.5px] space-y-2">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="size-4 shrink-0 text-destructive" />
+                    Warning: Customer Has Active Transactions
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-destructive/90">
+                    This customer has <strong>{bills.length} recorded bill(s)</strong> and{" "}
+                    <strong>{inr(due)} outstanding balance</strong>. Deleting this customer will remove their ledger history and invoice records.
+                  </p>
+                  <label className="flex items-start gap-2 pt-1 font-semibold text-[11px] cursor-pointer text-foreground bg-white/70 p-2 rounded-lg border border-destructive/20">
+                    <input
+                      type="checkbox"
+                      checked={forceDeleteConfirm}
+                      onChange={(e) => setForceDeleteConfirm(e.target.checked)}
+                      className="mt-0.5 rounded border-border text-destructive focus:ring-destructive cursor-pointer"
+                    />
+                    <span>I understand this action is permanent and want to force-delete this customer and all linked records</span>
+                  </label>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Are you sure you want to delete this customer? This record will be removed from your customer directory.
+                </p>
+              )}
+
+              {deleteError && (
+                <div className="p-2.5 rounded-lg bg-destructive/15 border border-destructive/30 text-destructive text-xs font-medium">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-border">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={isDeletingCustomer}
+                  onClick={() => {
+                    setDeleteModalOpen(false);
+                    setCustomerToDelete(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={isDeletingCustomer || (hasTransactions && !forceDeleteConfirm)}
+                  onClick={handleConfirmDeleteCustomer}
+                  className="gap-1 bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold shadow-xs"
+                >
+                  <Trash2 className="size-3.5" />
+                  {isDeletingCustomer ? "Deleting..." : "Confirm Delete"}
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }

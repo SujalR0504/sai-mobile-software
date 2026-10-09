@@ -6,6 +6,7 @@ import { logAudit } from "./auditService";
 import { recordCashbookEntry, recordCustomerLedger } from "./ledgerService";
 import { recordStockMovement } from "./stockMovementService";
 import { createEMIAccountAndSchedule, createEMIReceivable } from "./emiService";
+import { checkEmployeePermission } from "./permissionService";
 import { getDefaultCashAccount, getPaymentAccountById, recordAccountTransaction } from "./paymentAccountService";
 
 export interface CreateSaleInput {
@@ -17,6 +18,7 @@ export interface CreateSaleInput {
   payments: PaymentSplit[];
   quotation?: boolean;
   note?: string;
+  customerNote?: string;
   customInvoiceNo?: string;
   user?: string;
   // EMI Sale support
@@ -97,11 +99,11 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
   const total = Math.max(0, gross - discount);
   const tax = invoiceType === "NON_GST"
     ? 0
-    : input.items.reduce(
-        (sum, item) => sum + (item.price * item.qty * item.gst) / (100 + item.gst),
-        0
-      );
-  const subtotal = Math.round(total - tax);
+    : input.items.reduce((sum, item) => {
+        const itemGst = item.gst !== undefined && item.gst !== null ? Number(item.gst) : 18;
+        return sum + (item.price * item.qty * itemGst) / (100 + itemGst);
+      }, 0);
+  const subtotal = Math.round(total - (isNaN(tax) ? 0 : tax));
   const isQuotation = Boolean(input.quotation);
 
   // Initialize payments if not provided
@@ -128,7 +130,7 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
     const emiCompany = db.prepare(`
       SELECT id, company_name
       FROM finance_companies
-      WHERE id = ? AND active = 1
+      WHERE id = ? AND (active = 1 OR active IS NULL)
     `).get(emiCompanyId) as { id: string; company_name: string } | undefined;
 
     if (!emiCompany) {
@@ -258,9 +260,9 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
           item.isManual = false;
         }
 
-        const shouldTouchInventory = !Boolean(item.bypassStock || item.isManual);
+        const shouldTouchInventory = !Boolean(item.bypassStock || item.isManual) && Boolean(item.productId);
 
-        if (shouldTouchInventory) {
+        if (shouldTouchInventory && item.productId) {
           const product = db.prepare(
             "SELECT id, qty FROM products WHERE id = ?"
           ).get(item.productId) as any;
@@ -305,22 +307,26 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
             item.unitId = undefined;
           }
         }
-        const product = db.prepare("SELECT id, name, qty, tracked, purchase_price FROM products WHERE id = ?").get(item.productId) as any;
-        if (product) {
-          item.costPrice = item.costPrice ?? product.purchase_price ?? 0;
+        if (item.productId) {
+          const product = db.prepare("SELECT id, name, qty, tracked, purchase_price FROM products WHERE id = ?").get(item.productId) as any;
+          if (product) {
+            item.costPrice = item.costPrice ?? product.purchase_price ?? 0;
+          } else {
+            item.costPrice = item.costPrice ?? 0;
+          }
         } else {
           item.costPrice = item.costPrice ?? 0;
         }
       }
     }
 
-    // Insert Sale (including selected_template_id & invoice_type)
+    // Insert Sale (including selected_template_id, invoice_type & customer_note)
     const insertSaleStmt = db.prepare(`
       INSERT INTO sales (
         id, business_id, branch_id, invoice_no, invoice_type, selected_template_id, date, customer_id, discount, subtotal, tax,
-        total, paid, quotation, note, status, is_emi, emi_company_id, emi_down_payment, emi_financed_amount
+        total, paid, quotation, note, customer_note, status, is_emi, emi_company_id, emi_down_payment, emi_financed_amount
       )
-      VALUES (?, 'biz_default', 'branch_01', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
+      VALUES (?, 'biz_default', 'branch_01', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?, ?)
     `);
     insertSaleStmt.run(
       saleId,
@@ -336,6 +342,7 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       paid,
       isQuotation ? 1 : 0,
       input.note ?? null,
+      input.customerNote ?? input.note ?? null,
       isEmi ? 1 : 0,
       emiCompanyId ?? null,
       isEmi ? emiDownPayment : 0,
@@ -351,14 +358,14 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       insertItemStmt.run(
         `${saleId}_i_${idx}`,
         saleId,
-        item.productId,
+        item.productId || `manual_${idx}`,
         item.name,
         item.unitId ?? null,
         item.imei ?? null,
         item.qty,
         item.price,
-        item.gst,
-        item.costPrice,
+        item.gst ?? (invoiceType === "NON_GST" ? 0 : 18),
+        item.costPrice ?? 0,
         item.warrantyMonths ?? null
       );
     });
@@ -405,7 +412,7 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
         // excluded from stock. If a manual item contains an existing IMEI,
         // the pre-validation above resolves it to a real product/unit and
         // clears these flags before reaching this block.
-        if (item.bypassStock || item.isManual) {
+        if (item.bypassStock || item.isManual || !item.productId) {
           continue;
         }
 
@@ -628,6 +635,7 @@ export function createSale(db: DatabaseSync, input: CreateSaleInput): Sale {
       payments: input.payments,
       quotation: isQuotation,
       note: input.note,
+      customerNote: input.customerNote ?? input.note ?? undefined,
       status: "COMPLETED",
       isEmi,
       emiCompanyId,
@@ -647,86 +655,381 @@ export function voidSale(
   reason: string,
   adminUser = "Admin"
 ): void {
+  cancelSaleInvoice(db, saleId, reason, adminUser);
+}
+
+export function reverseSaleStock(
+  db: DatabaseSync,
+  saleId: string,
+  items: any[],
+  user = "Admin"
+): void {
+  for (const item of items) {
+    const productExists = db.prepare("SELECT id, qty FROM products WHERE id = ?").get(item.product_id) as any;
+    if (productExists) {
+      db.prepare("UPDATE products SET qty = qty + ? WHERE id = ?").run(item.qty, item.product_id);
+    }
+
+    recordStockMovement(db, {
+      productId: item.product_id,
+      unitId: item.unit_id,
+      imei: item.imei,
+      movementType: "SALE_CANCEL" as any,
+      quantity: item.qty,
+      costPerUnit: item.cost_price || 0,
+      referenceId: saleId,
+      notes: `Reversed stock for cancelled bill`,
+      createdBy: user,
+    });
+  }
+}
+
+export function reverseIMEIStatus(
+  db: DatabaseSync,
+  saleId: string,
+  items: any[]
+): void {
+  for (const item of items) {
+    if (item.unit_id) {
+      db.prepare(
+        "UPDATE units SET status = 'IN_STOCK', sale_id = NULL, customer_id = NULL WHERE id = ?"
+      ).run(item.unit_id);
+    } else if (item.imei) {
+      db.prepare(
+        "UPDATE units SET status = 'IN_STOCK', sale_id = NULL, customer_id = NULL WHERE (imei1 = ? OR imei2 = ?) AND (sale_id = ? OR sale_id IS NULL OR status = 'sold' OR status = 'SOLD')"
+      ).run(item.imei, item.imei, saleId);
+    }
+  }
+}
+
+export function reverseSalePayment(
+  db: DatabaseSync,
+  sale: any,
+  payments: any[],
+  user = "Admin"
+): void {
+  const recordedPayments = db
+    .prepare("SELECT * FROM payments WHERE party = 'customer' AND ref_id = ?")
+    .all(sale.id) as any[];
+
+  let totalCashReversed = 0;
+
+  for (const p of recordedPayments) {
+    if (p.payment_account_id && p.amount > 0) {
+      recordAccountTransaction(db, {
+        accountId: p.payment_account_id,
+        transactionType: "REFUND",
+        referenceType: "SALE_CANCEL",
+        referenceId: sale.id,
+        amount: p.amount,
+        isCredit: false, // outflow to correct balance
+        paymentMethod: p.mode || "Payment",
+        description: `Payment reversed for cancelled invoice ${sale.invoice_no}`,
+        createdBy: user,
+      });
+    }
+    if ((p.mode || "").toLowerCase() === "cash" && p.amount > 0) {
+      totalCashReversed += p.amount;
+    }
+  }
+
+  // Also check sale_payments if payments table had no entries
+  if (recordedPayments.length === 0 && payments && payments.length > 0) {
+    for (const p of payments) {
+      if (p.payment_account_id && p.amount > 0 && p.mode !== "Credit" && p.mode !== "EMI") {
+        recordAccountTransaction(db, {
+          accountId: p.payment_account_id,
+          transactionType: "REFUND",
+          referenceType: "SALE_CANCEL",
+          referenceId: sale.id,
+          amount: p.amount,
+          isCredit: false,
+          paymentMethod: p.mode,
+          description: `Payment reversed for cancelled invoice ${sale.invoice_no}`,
+          createdBy: user,
+        });
+        if (p.mode.toLowerCase() === "cash") {
+          totalCashReversed += p.amount;
+        }
+      }
+    }
+  }
+
+  if (totalCashReversed > 0) {
+    recordCashbookEntry(
+      db,
+      "SALE_CANCEL",
+      sale.id,
+      "Sales Reversal",
+      0,
+      totalCashReversed,
+      `Reversal for cancelled invoice ${sale.invoice_no}`
+    );
+  }
+}
+
+export function reverseCustomerLedger(
+  db: DatabaseSync,
+  customerId: string,
+  saleId: string,
+  total: number,
+  paid: number,
+  invoiceNo: string,
+  user = "Admin"
+): void {
+  // 1. Credit the customer ledger for total sale amount to negate the initial sale debit
+  recordCustomerLedger(
+    db,
+    customerId,
+    "CREDIT_ADJUSTMENT",
+    saleId,
+    0,
+    total,
+    `Cancelled sale invoice ${invoiceNo}`
+  );
+
+  // 2. If payments were made, negate the customer payment credit by debiting the ledger
+  if (paid > 0) {
+    recordCustomerLedger(
+      db,
+      customerId,
+      "DEBIT_ADJUSTMENT",
+      saleId,
+      paid,
+      0,
+      `Reversed payment for cancelled invoice ${invoiceNo}`
+    );
+  }
+}
+
+export function cancelSaleInvoice(
+  db: DatabaseSync,
+  saleIdOrOpts: string | { saleId: string; reason: string; cancelledBy?: string; user?: string; employeeId?: string; role?: string },
+  reasonArg?: string,
+  userArg = "Admin",
+  employeeIdArg?: string
+): { success: boolean; id: string; invoiceNo: string; status: string } {
+  let saleId: string;
+  let reason: string;
+  let user = "Admin";
+  let employeeId: string | undefined;
+
+  if (typeof saleIdOrOpts === "object" && saleIdOrOpts !== null) {
+    saleId = saleIdOrOpts.saleId;
+    reason = saleIdOrOpts.reason;
+    user = saleIdOrOpts.cancelledBy || saleIdOrOpts.user || "Admin";
+    employeeId = saleIdOrOpts.employeeId;
+  } else {
+    saleId = saleIdOrOpts;
+    reason = reasonArg || "";
+    user = userArg;
+    employeeId = employeeIdArg;
+  }
+
+  if (!reason || !reason.trim()) {
+    throw new Error("Reason for cancelling the bill is mandatory.");
+  }
+
+  if (employeeId && !checkEmployeePermission(db, employeeId, "SALE_BILL_DELETE")) {
+    throw new Error("User does not have permission to delete/cancel bills (SALE_BILL_DELETE required)");
+  }
+
   const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId) as any;
-  if (!sale) throw new Error("Sale not found");
-  if (sale.status === "VOID") throw new Error("Sale is already voided");
+  if (!sale) throw new Error(`Sale bill '${saleId}' not found`);
+  if (sale.status === "CANCELLED") throw new Error(`Sale bill ${sale.invoice_no} is already cancelled`);
+  if (sale.status === "VOID") throw new Error(`Sale bill ${sale.invoice_no} is already voided`);
+
+  // Verify EMI settlement if applicable
+  if (sale.is_emi) {
+    const emiReceivable = db
+      .prepare("SELECT * FROM emi_receivables WHERE sale_id = ? OR id = ?")
+      .get(saleId, sale.emi_receivable_id || "") as any;
+    if (emiReceivable) {
+      if (emiReceivable.status === "SETTLED" || (emiReceivable.received_amount && emiReceivable.received_amount > 0)) {
+        throw new Error("EMI settlement already received. Admin action required.");
+      }
+    }
+  }
 
   const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(saleId) as any[];
+  const payments = db.prepare("SELECT * FROM sale_payments WHERE sale_id = ?").all(saleId) as any[];
 
   db.exec("BEGIN TRANSACTION;");
   try {
-    // Mark sale VOID (Never hard delete financial records per spec!)
-    db.prepare("UPDATE sales SET status = 'VOID' WHERE id = ?").run(saleId);
+    const now = new Date().toISOString();
 
-    // If EMI sale, mark receivable CANCELLED
-    if (sale.is_emi && sale.emi_receivable_id) {
-      db.prepare("UPDATE emi_receivables SET status = 'CANCELLED' WHERE id = ?").run(sale.emi_receivable_id);
+    // 1. Stock Reversal
+    reverseSaleStock(db, saleId, items, user);
+
+    // 2. IMEI Reversal
+    reverseIMEIStatus(db, saleId, items);
+
+    // 3. Payment Reversal
+    reverseSalePayment(db, sale, payments, user);
+
+    // 4. Customer Ledger Reversal
+    reverseCustomerLedger(db, sale.customer_id, saleId, sale.total, sale.paid, sale.invoice_no, user);
+
+    // 5. Cancel EMI Receivable & Account if present
+    if (sale.is_emi) {
+      if (sale.emi_receivable_id) {
+        db.prepare("UPDATE emi_receivables SET status = 'CANCELLED' WHERE id = ?").run(sale.emi_receivable_id);
+      }
+      db.prepare("UPDATE emi_receivables SET status = 'CANCELLED' WHERE sale_id = ?").run(saleId);
+      if (sale.emi_account_id) {
+        db.prepare("UPDATE emi_accounts SET status = 'CANCELLED' WHERE id = ?").run(sale.emi_account_id);
+      }
+      db.prepare("UPDATE emi_accounts SET status = 'CANCELLED' WHERE sale_id = ?").run(saleId);
     }
 
-    // Restore inventory only for real inventory-backed sale items.
-    for (const item of items) {
-      const productExists = db.prepare(
-        "SELECT id FROM products WHERE id = ?"
-      ).get(item.product_id);
+    // 6. Soft Delete: Update Sale status to CANCELLED with audit details
+    db.prepare(`
+      UPDATE sales
+      SET status = 'CANCELLED',
+          cancelled_at = ?,
+          cancelled_by = ?,
+          cancellation_reason = ?
+      WHERE id = ?
+    `).run(now, user, reason.trim(), saleId);
 
-      const unitExists = item.unit_id
-        ? db.prepare("SELECT id FROM units WHERE id = ?").get(item.unit_id)
-        : null;
-
-      if (item.unit_id && unitExists) {
-        db.prepare(
-          "UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE id = ?"
-        ).run(item.unit_id);
-      } else if (item.imei) {
-        db.prepare(
-          "UPDATE units SET status = 'available', sale_id = NULL, customer_id = NULL WHERE (imei1 = ? OR imei2 = ?) AND sale_id = ?"
-        ).run(item.imei, item.imei, saleId);
-      }
-
-      if (!productExists) {
-        // Historical/direct manual item with no catalog product.
-        continue;
-      }
-
-      db.prepare(
-        "UPDATE products SET qty = qty + ? WHERE id = ?"
-      ).run(item.qty, item.product_id);
-
-      recordStockMovement(db, {
-        productId: item.product_id,
-        unitId: item.unit_id,
-        imei: item.imei,
-        movementType: "ADJUSTMENT_IN",
-        quantity: item.qty,
-        costPerUnit: item.cost_price,
-        referenceId: saleId,
-        notes: `Reverted due to voided bill ${sale.invoice_no}`,
-        createdBy: adminUser,
-      });
-    }
-
-    // Reverse customer ledger
-    recordCustomerLedger(db, sale.customer_id, "CREDIT_ADJUSTMENT", saleId, 0, sale.total, `Voided bill ${sale.invoice_no}: ${reason}`);
-
+    // 7. Audit Log
     logAudit(db, {
-      userName: adminUser,
-      action: "FINANCIAL_TRANSACTION_VOID",
-      module: "SALES",
+      userId: employeeId || user,
+      userName: user,
+      action: "SALE_BILL_CANCEL",
+      module: "POS",
       recordId: saleId,
-      oldValue: { status: "COMPLETED", invoiceNo: sale.invoice_no },
-      newValue: { status: "VOID" },
-      reason,
-      adminApprovedBy: adminUser,
+      oldValue: {
+        status: sale.status || "COMPLETED",
+        invoiceNo: sale.invoice_no,
+        customerId: sale.customer_id,
+        total: sale.total,
+        paid: sale.paid,
+      },
+      newValue: {
+        status: "CANCELLED",
+        cancelledAt: now,
+        cancelledBy: user,
+        cancellationReason: reason.trim(),
+        stockReversed: true,
+        imeiReversed: true,
+        paymentReversed: true,
+        customerLedgerReversed: true,
+      },
+      reason: `Cancelled bill ${sale.invoice_no}: ${reason.trim()}`,
+      adminApprovedBy: user,
     });
 
     db.exec("COMMIT;");
+
+    return {
+      success: true,
+      id: saleId,
+      invoiceNo: sale.invoice_no,
+      status: "CANCELLED",
+    };
   } catch (err) {
     db.exec("ROLLBACK;");
     throw err;
   }
 }
 
+export function updateInvoiceNote(
+  db: DatabaseSync,
+  saleId: string,
+  customerNote: string,
+  user = "Admin"
+): void {
+  db.prepare(`
+    UPDATE sales
+    SET customer_note = ?, note = COALESCE(note, ?)
+    WHERE id = ?
+  `).run(customerNote, customerNote, saleId);
+
+  logAudit(db, {
+    userName: user,
+    action: "SALE_NOTE_UPDATE",
+    module: "SALES",
+    recordId: saleId,
+    newValue: { customerNote },
+    reason: `Updated customer note for bill ${saleId}`,
+  });
+}
+
+export const saveCustomerNote = updateInvoiceNote;
+
+export function getCancelledBills(db: DatabaseSync): any[] {
+  const rows = db.prepare(`
+    SELECT s.*, c.name as customer_name, c.phone as customer_phone
+    FROM sales s
+    LEFT JOIN customers c ON s.customer_id = c.id
+    WHERE s.status = 'CANCELLED'
+    ORDER BY s.cancelled_at DESC, s.date DESC
+  `).all() as any[];
+
+  return rows.map((r) => {
+    const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(r.id) as any[];
+    const payments = db.prepare("SELECT * FROM sale_payments WHERE sale_id = ?").all(r.id) as any[];
+    return {
+      id: r.id,
+      invoiceNo: r.invoice_no,
+      date: r.date,
+      customerName: r.customer_name || "Unknown Customer",
+      customerPhone: r.customer_phone || "",
+      amount: r.total,
+      paid: r.paid,
+      cancelledBy: r.cancelled_by || "Admin",
+      cancelledDate: r.cancelled_at || r.date,
+      reason: r.cancellation_reason || "Bill Cancelled",
+      originalPayment: payments.map((p) => `${p.mode}: ₹${p.amount}`).join(", ") || `Paid: ₹${r.paid}`,
+      stockReversed: items.map((i) => `${i.name} (x${i.qty})`).join(", "),
+      status: "CANCELLED",
+    };
+  });
+}
+
 export function getSaleById(db: DatabaseSync, saleId: string): Sale | null {
-  const sales = getSales(db);
-  return sales.find((s) => s.id === saleId) ?? null;
+  const row = db.prepare("SELECT * FROM sales WHERE id = ? OR invoice_no = ?").get(saleId, saleId) as any;
+  if (!row) return null;
+  const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(row.id) as any[];
+  const payments = db.prepare("SELECT * FROM payments WHERE party = 'customer' AND ref_id = ?").all(row.id) as any[];
+
+  return {
+    id: row.id,
+    invoiceNo: row.invoice_no,
+    invoiceType: (row.invoice_type as "GST" | "NON_GST") || "GST",
+    date: row.date,
+    customerId: row.customer_id,
+    items: items.map((i) => ({
+      productId: i.product_id,
+      unitId: i.unit_id ?? undefined,
+      name: i.name,
+      price: i.price,
+      costPrice: i.cost_price,
+      qty: i.qty,
+      gst: i.gst,
+      hsn: i.hsn ?? undefined,
+      imei: i.imei ?? undefined,
+    })),
+    discount: row.discount,
+    subtotal: row.subtotal,
+    tax: row.tax,
+    total: row.total,
+    paid: row.paid,
+    payments: payments.map((p) => ({
+      mode: p.mode as PaymentSplit["mode"],
+      amount: p.amount,
+    })),
+    quotation: Boolean(row.quotation),
+    note: row.note ?? undefined,
+    customerNote: row.customer_note ?? row.note ?? undefined,
+    status: row.status as "COMPLETED" | "VOID" | "CANCELLED",
+    cancelledAt: row.cancelled_at ?? undefined,
+    cancelledBy: row.cancelled_by ?? undefined,
+    cancellationReason: row.cancellation_reason ?? undefined,
+    isEmi: Boolean(row.is_emi),
+    emiCompanyId: row.emi_company_id ?? undefined,
+    emiDownPayment: row.emi_down_payment ?? undefined,
+    emiFinancedAmount: row.emi_financed_amount ?? undefined,
+  };
 }

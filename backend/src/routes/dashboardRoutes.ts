@@ -12,6 +12,9 @@ import {
   getCustomerDueSummary,
   getEMISummary,
   getRepairSummary,
+  getDailySales,
+  getOldStock,
+  getNewStock,
 } from "../services/dashboardService";
 import { jsonResponse, type RouteContext } from "./types";
 
@@ -129,6 +132,23 @@ export async function dashboardRoutes({ request, url, pathname, method, db }: Ro
   // 14. Repairs Summary
   if (pathname === "/api/dashboard/repairs" && method === "GET") {
     return jsonResponse(getRepairSummary(db));
+  }
+
+  // 15. Daily Sales
+  if (pathname === "/api/dashboard/daily-sales" && method === "GET") {
+    const dateFrom = url.searchParams.get("dateFrom") || undefined;
+    const dateTo = url.searchParams.get("dateTo") || undefined;
+    return jsonResponse(getDailySales(db, { dateFrom, dateTo }));
+  }
+
+  // 16. Old Stock
+  if (pathname === "/api/dashboard/old-stock" && method === "GET") {
+    return jsonResponse(getOldStock(db));
+  }
+
+  // 17. New Stock
+  if (pathname === "/api/dashboard/new-stock" && method === "GET") {
+    return jsonResponse(getNewStock(db));
   }
 
   return null;

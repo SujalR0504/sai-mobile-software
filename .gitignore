@@ -16,6 +16,8 @@ dist-ssr
 .nitro
 *.local
 *.traineddata
+.vite
+.vite/
 
 # Wrangler / Cloudflare
 .wrangler/

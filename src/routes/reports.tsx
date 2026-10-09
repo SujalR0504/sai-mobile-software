@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -31,7 +31,10 @@ import type {
 } from "@/lib/types";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
-import { Eye, FileText, Printer, Search, Calendar, RefreshCw } from "lucide-react";
+import { Eye, FileText, Printer, Search, Calendar, RefreshCw, Trash2, Archive, Ban } from "lucide-react";
+import { salesApi } from "@/services/api/salesApi";
+import { permissionsApi } from "@/services/api/permissionsApi";
+import { CancelSaleBillModal } from "@/components/sales/CancelSaleBillModal";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -41,10 +44,12 @@ export const Route = createFileRoute("/reports")({
 });
 
 function ReportsPage() {
-  const { db } = useStore();
+  const { db, refreshFromBackend } = useStore();
   const [activeTab, setActiveTab] = useState<
     | "overview"
     | "invoices"
+    | "cancelled_bills"
+    | "old_stock"
     | "item_wise"
     | "imei_wise"
     | "emi"
@@ -59,6 +64,8 @@ function ReportsPage() {
     if (typeof window !== "undefined") {
       const tab = new URLSearchParams(window.location.search).get("tab");
       if (tab === "invoices" || tab === "bills") return "invoices";
+      if (tab === "cancelled_bills" || tab === "cancelled") return "cancelled_bills";
+      if (tab === "old_stock") return "old_stock";
     }
     return "overview";
   });
@@ -82,7 +89,7 @@ function ReportsPage() {
   const [invoiceTypeFilter, setInvoiceTypeFilter] = useState<"ALL" | "GST" | "NON_GST">("ALL");
 
   const filteredSalesInvoices = useMemo(() => {
-    const list = [...(db.sales || [])].filter((s) => !s.quotation && s.status !== "VOID");
+    const list = [...(db.sales || [])].filter((s) => !s.quotation && s.status !== "VOID" && s.status !== "CANCELLED");
     list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return list.filter((s) => {
@@ -158,6 +165,99 @@ function ReportsPage() {
       totalDue,
     };
   }, [filteredSalesInvoices]);
+
+  // User & SALE_BILL_DELETE permission check
+  const currentUser = useMemo(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("erp_user");
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
+  const role = currentUser?.role?.toUpperCase() || "ADMIN";
+  const [canDeleteBill, setCanDeleteBill] = useState(
+    role === "ADMIN" || role === "OWNER"
+  );
+
+  useEffect(() => {
+    if (role === "ADMIN" || role === "OWNER") {
+      setCanDeleteBill(true);
+      return;
+    }
+    if (currentUser?.employeeId || currentUser?.id) {
+      const empId = currentUser.employeeId || currentUser.id;
+      permissionsApi.checkPermission(empId, "Sales", "DELETE")
+        .then((res) => {
+          setCanDeleteBill(res.allowed);
+        })
+        .catch(() => {
+          setCanDeleteBill(false);
+        });
+    } else {
+      setCanDeleteBill(false);
+    }
+  }, [currentUser, role]);
+
+  const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+
+  // Cancelled Bills Report State
+  const [cancelledBills, setCancelledBills] = useState<any[]>([]);
+  const [loadingCancelledBills, setLoadingCancelledBills] = useState(false);
+
+  const loadCancelledBills = useCallback(async () => {
+    setLoadingCancelledBills(true);
+    try {
+      const res = await salesApi.getCancelledSales();
+      setCancelledBills(res || []);
+    } catch (err) {
+      console.error("Failed to load cancelled bills:", err);
+    } finally {
+      setLoadingCancelledBills(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "cancelled_bills") {
+      loadCancelledBills();
+    }
+  }, [activeTab, loadCancelledBills]);
+
+  // Old Stock / Accessories Report State
+  const [oldStockCategory, setOldStockCategory] = useState("ALL");
+  const [oldStockBrand, setOldStockBrand] = useState("ALL");
+  const [oldStockSearch, setOldStockSearch] = useState("");
+
+  const oldStockRows = useMemo(() => {
+    return (db.products || [])
+      .filter((p) => {
+        const isOld = p.stockType === "OLD_STOCK" || p.stockSource === "OPENING_STOCK";
+        if (!isOld) return false;
+        if (oldStockCategory !== "ALL" && p.category !== oldStockCategory) return false;
+        if (oldStockBrand !== "ALL" && p.brand !== oldStockBrand) return false;
+        if (oldStockSearch.trim()) {
+          const q = oldStockSearch.toLowerCase();
+          return p.name.toLowerCase().includes(q) || (p.model && p.model.toLowerCase().includes(q));
+        }
+        return true;
+      })
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        brand: p.brand,
+        model: p.model || "—",
+        openingQty: p.openingStock || p.qty,
+        currentQty: p.qty,
+        purchasePrice: p.purchasePrice || p.cost || 0,
+        stockValuation: (p.qty || 0) * (p.purchasePrice || p.cost || 0),
+      }));
+  }, [db.products, oldStockCategory, oldStockBrand, oldStockSearch]);
 
   // Remote reports data
   const [emiReport, setEmiReport] = useState<any>(null);
@@ -751,6 +851,28 @@ function ReportsPage() {
           <span>Bills & Invoices Register</span>
         </button>
         <button
+          onClick={() => setActiveTab("cancelled_bills")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === "cancelled_bills"
+              ? "border-destructive text-destructive"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Ban className="size-3.5" />
+          <span>Cancelled Bills</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("old_stock")}
+          className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === "old_stock"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Archive className="size-3.5" />
+          <span>Old Stock / Accessories</span>
+        </button>
+        <button
           onClick={() => setActiveTab("item_wise")}
           className={`px-4 py-2 border-b-2 transition-colors whitespace-nowrap ${
             activeTab === "item_wise"
@@ -1070,20 +1192,18 @@ function ReportsPage() {
               />
             ) : (
               <Table
-                head={
-                  <tr>
-                    <th>Date & Time</th>
-                    <th>Invoice No</th>
-                    <th>Customer</th>
-                    <th>Items Sold</th>
-                    <th>Mode</th>
-                    <th className="text-right">Total Amount</th>
-                    <th className="text-right">Paid</th>
-                    <th className="text-right">Balance Due</th>
-                    <th>Status</th>
-                    <th className="text-right">Action</th>
-                  </tr>
-                }
+                head={[
+                  "Date & Time",
+                  "Invoice No",
+                  "Customer",
+                  "Items Sold",
+                  "Mode",
+                  ">Total Amount",
+                  ">Paid",
+                  ">Balance Due",
+                  "Status",
+                  ">Action",
+                ]}
               >
                 {filteredSalesInvoices.map((s) => {
                   const cust = db.customers.find((c) => c.id === s.customerId);
@@ -1171,12 +1291,161 @@ function ReportsPage() {
                           >
                             <Eye className="size-3.5" /> View Bill
                           </Button>
+                          {canDeleteBill && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => {
+                                setSaleToCancel(s);
+                                setCancelModalOpen(true);
+                              }}
+                              className="h-7 px-2.5 text-xs font-bold gap-1 bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-xs"
+                              title="Cancel / Delete Sale Bill"
+                            >
+                              <Trash2 className="size-3.5" /> Cancel Bill
+                            </Button>
+                          )}
                         </div>
                       </Td>
                     </Row>
                   );
                 })}
               </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* CANCELLED BILLS REPORT */}
+      {activeTab === "cancelled_bills" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHead
+              title="Cancelled Bills & Invoices Register"
+              sub="Audited log of all cancelled bills with reasons, reversal timestamps, and authorizing users"
+              right={
+                <Button size="sm" variant="outline" onClick={loadCancelledBills} disabled={loadingCancelledBills} className="gap-1.5">
+                  <RefreshCw className={`size-3.5 ${loadingCancelledBills ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              }
+            />
+            {loadingCancelledBills ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">Loading cancelled bills...</div>
+            ) : cancelledBills.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                No cancelled bills found in audit history.
+              </div>
+            ) : (
+              <Table>
+                <thead>
+                  <tr className="bg-muted/40 border-b border-border/80 text-muted-foreground font-semibold text-xs">
+                    <th className="p-2.5">Invoice No</th>
+                    <th className="p-2.5">Date</th>
+                    <th className="p-2.5">Customer</th>
+                    <th className="p-2.5 text-right">Amount</th>
+                    <th className="p-2.5">Cancelled By</th>
+                    <th className="p-2.5">Cancelled Date</th>
+                    <th className="p-2.5">Reason</th>
+                    <th className="p-2.5 text-right">Original Payment</th>
+                    <th className="p-2.5 text-center">Stock Reversed</th>
+                    <th className="p-2.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60 text-xs">
+                  {cancelledBills.map((b) => (
+                    <tr key={b.id} className="hover:bg-muted/20">
+                      <td className="p-2.5 font-mono font-bold text-destructive">{b.invoiceNo}</td>
+                      <td className="p-2.5 text-muted-foreground font-mono">{b.date}</td>
+                      <td className="p-2.5 font-medium">{b.customerName || "Customer"}</td>
+                      <td className="p-2.5 text-right font-mono font-bold">{inr(b.amount || b.total)}</td>
+                      <td className="p-2.5 font-semibold text-foreground">{b.cancelledBy || "Admin"}</td>
+                      <td className="p-2.5 text-muted-foreground font-mono text-[11px]">{b.cancelledDate ? new Date(b.cancelledDate).toLocaleString("en-IN") : "—"}</td>
+                      <td className="p-2.5 max-w-[200px] truncate text-slate-700" title={b.reason || b.cancellationReason}>{b.reason || b.cancellationReason || "—"}</td>
+                      <td className="p-2.5 text-right font-mono text-emerald-600">{inr(b.originalPayment ?? b.paid ?? 0)}</td>
+                      <td className="p-2.5 text-center font-bold text-emerald-700">{b.stockReversed ? "✓ Reversed" : "—"}</td>
+                      <td className="p-2.5">
+                        <Badge tone="danger" className="text-[10px] font-bold">CANCELLED</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* OLD STOCK / ACCESSORIES REPORT */}
+      {activeTab === "old_stock" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHead
+              title="Old Stock / Accessories Register"
+              sub="Classification of existing opening and pre-system accessories separated from current inward"
+            />
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Field label="Category">
+                  <Select value={oldStockCategory} onChange={(e) => setOldStockCategory(e.target.value)}>
+                    <option value="ALL">All Categories</option>
+                    {categoriesList.map((c) => (<option key={c} value={c}>{c}</option>))}
+                  </Select>
+                </Field>
+                <Field label="Brand">
+                  <Select value={oldStockBrand} onChange={(e) => setOldStockBrand(e.target.value)}>
+                    <option value="ALL">All Brands</option>
+                    {brandsList.map((b) => (<option key={b} value={b}>{b}</option>))}
+                  </Select>
+                </Field>
+                <Field label="Search Product">
+                  <Input placeholder="Search accessories..." value={oldStockSearch} onChange={(e) => setOldStockSearch(e.target.value)} />
+                </Field>
+              </div>
+
+              {/* Summary KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+                <Stat label="Total Old Products" value={`${oldStockRows.length}`} tone="neutral" />
+                <Stat label="Total Old Stock Qty" value={`${oldStockRows.reduce((s, r) => s + (r.currentQty || 0), 0)} units`} tone="info" />
+                <Stat label="Total Valuation" value={inr(oldStockRows.reduce((s, r) => s + (r.stockValuation || 0), 0))} tone="success" />
+              </div>
+            </div>
+
+            {oldStockRows.length === 0 ? (
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                No items marked as Old Stock or Opening Stock match your filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="bg-muted/40 border-b border-border/80 text-muted-foreground font-semibold">
+                      <th className="p-2.5">Product</th>
+                      <th className="p-2.5">Category</th>
+                      <th className="p-2.5">Brand</th>
+                      <th className="p-2.5">Model</th>
+                      <th className="p-2.5 text-right">Opening Quantity</th>
+                      <th className="p-2.5 text-right font-bold text-foreground">Current Quantity</th>
+                      <th className="p-2.5 text-right">Purchase Value</th>
+                      <th className="p-2.5 text-right font-bold text-primary">Current Stock Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {oldStockRows.map((r) => (
+                      <tr key={r.id} className="hover:bg-muted/20">
+                        <td className="p-2.5 font-bold text-foreground">{r.name}</td>
+                        <td className="p-2.5 text-muted-foreground">{r.category}</td>
+                        <td className="p-2.5">{r.brand}</td>
+                        <td className="p-2.5 font-mono text-muted-foreground">{r.model}</td>
+                        <td className="p-2.5 text-right font-mono">{r.openingQty}</td>
+                        <td className="p-2.5 text-right font-mono font-bold text-foreground">{r.currentQty}</td>
+                        <td className="p-2.5 text-right font-mono">{inr(r.purchasePrice)}</td>
+                        <td className="p-2.5 text-right font-mono font-bold text-primary">{inr(r.stockValuation)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
         </div>
@@ -2189,6 +2458,23 @@ function ReportsPage() {
           {...saleToInvoiceProps(selectedInvoiceSale, db)}
         />
       )}
+
+      {/* CANCEL SALE BILL MODAL */}
+      <CancelSaleBillModal
+        open={cancelModalOpen}
+        onClose={() => {
+          setCancelModalOpen(false);
+          setSaleToCancel(null);
+        }}
+        sale={saleToCancel}
+        customerName={db.customers?.find((c) => c.id === saleToCancel?.customerId)?.name}
+        onSuccess={() => {
+          setCancelModalOpen(false);
+          setSaleToCancel(null);
+          refreshFromBackend();
+          loadCancelledBills();
+        }}
+      />
     </div>
   );
 }

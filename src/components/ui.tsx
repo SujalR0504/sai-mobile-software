@@ -176,30 +176,41 @@ export function Table({
   headers,
   children,
 }: {
-  head?: string[];
+  head?: string[] | ReactNode;
   headers?: string[];
   children: ReactNode;
 }) {
-  const colHeaders = head || headers || [];
+  const colHeaders = head || headers;
+  const isArrayHeaders = Array.isArray(colHeaders);
+
   return (
     <div className="overflow-x-auto rounded-xl -mx-1 sm:mx-0">
       <table className="w-full min-w-full text-[12px] sm:text-[13px]">
-        <thead>
-          <tr className="border-b border-border/80 bg-foreground/[0.02] text-left text-[10.5px] sm:text-[11px] tracking-[0.06em] text-muted-foreground uppercase font-semibold">
-            {colHeaders.map((h) => (
-              <th
-                key={h}
-                className={cn(
-                  "px-3 sm:px-4 py-2.5 sm:py-3 font-semibold whitespace-nowrap",
-                  h.startsWith(">") && "text-right",
-                )}
-              >
-                {h.replace(/^>/, "")}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/60">{children}</tbody>
+        {isArrayHeaders && colHeaders.length > 0 && (
+          <thead>
+            <tr className="border-b border-border/80 bg-foreground/[0.02] text-left text-[10.5px] sm:text-[11px] tracking-[0.06em] text-muted-foreground uppercase font-semibold">
+              {colHeaders.map((h: string) => (
+                <th
+                  key={h}
+                  className={cn(
+                    "px-3 sm:px-4 py-2.5 sm:py-3 font-semibold whitespace-nowrap",
+                    h.startsWith(">") && "text-right",
+                  )}
+                >
+                  {h.replace(/^>/, "")}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        {!isArrayHeaders && Boolean(colHeaders) && (
+          <thead>{colHeaders}</thead>
+        )}
+        {colHeaders ? (
+          <tbody className="divide-y divide-border/60">{children}</tbody>
+        ) : (
+          children
+        )}
       </table>
     </div>
   );

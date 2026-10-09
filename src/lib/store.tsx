@@ -62,6 +62,7 @@ interface StoreValue {
   // creators
   addCustomer: (c: Omit<Customer, "id" | "createdAt">) => Customer;
   updateCustomer: (id: string, patch: Partial<Customer>) => void;
+  deleteCustomer: (id: string, force?: boolean) => Promise<{ success: boolean; id: string; name: string }>;
   addSupplier: (s: Omit<Supplier, "id">) => Supplier;
   addProduct: (p: Omit<Product, "id">) => Product;
   updateProduct: (id: string, patch: Partial<Product>) => void;
@@ -77,6 +78,7 @@ interface StoreValue {
     payments: PaymentSplit[];
     quotation?: boolean;
     note?: string;
+    customerNote?: string;
     isEmi?: boolean;
     emiCompanyId?: string;
     emiDownPayment?: number;
@@ -88,6 +90,7 @@ interface StoreValue {
     tenureMonths?: number;
     firstEmiDate?: string;
   }) => Sale;
+  cancelSale: (id: string, reason: string, user?: string, employeeId?: string, role?: string) => Promise<{ success: boolean; message: string }>;
   recordCustomerPayment: (input: {
     customerId: string;
     amount: number;
@@ -263,6 +266,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     customersApi.updateCustomer(id, patch).catch(() => {});
   }, []);
 
+  const deleteCustomer: StoreValue["deleteCustomer"] = useCallback(async (id, force = false) => {
+    const res = await customersApi.deleteCustomer(id, force);
+    if (res?.success) {
+      setDb((d) => ({
+        ...d,
+        customers: d.customers.filter((c) => c.id !== id),
+        sales: force ? d.sales.filter((s) => s.customerId !== id) : d.sales,
+        customerLedger: force ? (d.customerLedger || []).filter((l) => l.customerId !== id) : d.customerLedger,
+      }));
+    }
+    return res;
+  }, []);
+
   const addSupplier: StoreValue["addSupplier"] = useCallback((s) => {
     const created: Supplier = { ...s, id: (s as any).id || uid("sup") };
     setDb((d) => ({ ...d, suppliers: [...d.suppliers, created] }));
@@ -344,7 +360,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const recordSale: StoreValue["recordSale"] = useCallback(
-    ({ customerId, invoiceType, selectedTemplateId, items, discount, payments, quotation, note, isEmi, emiCompanyId, emiDownPayment, emiFinancedAmount, financeReferenceNumber, expectedPaymentDate, interestRate, interestType, tenureMonths, firstEmiDate }) => {
+    ({ customerId, invoiceType, selectedTemplateId, items, discount, payments, quotation, note, customerNote, isEmi, emiCompanyId, emiDownPayment, emiFinancedAmount, financeReferenceNumber, expectedPaymentDate, interestRate, interestType, tenureMonths, firstEmiDate }) => {
       const invType = invoiceType || "GST";
       const gross = items.reduce((s, i) => s + i.price * i.qty, 0);
       const total = Math.max(0, gross - discount);
@@ -352,6 +368,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const paid = payments
         .filter((p) => p.mode !== "Credit" && p.mode !== "EMI")
         .reduce((s, p) => s + p.amount, 0);
+
+      const effectiveNote = customerNote !== undefined ? customerNote : note;
 
       const sale: Sale = {
         id: uid("s"),
@@ -368,7 +386,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         paid,
         payments,
         ...(quotation !== undefined ? { quotation } : {}),
-        ...(note !== undefined ? { note } : {}),
+        ...(effectiveNote !== undefined ? { note: effectiveNote, customerNote: effectiveNote } : {}),
         ...(isEmi !== undefined ? { isEmi } : {}),
         ...(emiCompanyId !== undefined ? { emiCompanyId } : {}),
         ...(emiDownPayment !== undefined ? { emiDownPayment } : {}),
@@ -472,7 +490,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           discount,
           payments,
           quotation,
-          note,
+          note: effectiveNote,
+          customerNote: effectiveNote,
           customInvoiceNo: sale.invoiceNo,
           isEmi,
           emiCompanyId,
@@ -501,6 +520,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return sale;
     },
     [nextNo, refreshFromBackend],
+  );
+
+  const cancelSale: StoreValue["cancelSale"] = useCallback(
+    async (id, reason, user, employeeId, role) => {
+      const res = await salesApi.cancelSale(id, reason, user, employeeId, role);
+      await refreshFromBackend();
+      return res;
+    },
+    [refreshFromBackend],
   );
 
   const recordPurchase: StoreValue["recordPurchase"] = useCallback(
@@ -996,6 +1024,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshFromBackend,
       addCustomer,
       updateCustomer,
+      deleteCustomer,
       addSupplier,
       addProduct,
       updateProduct,
@@ -1003,6 +1032,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addUnits,
       setUnitStatus,
       recordSale,
+      cancelSale,
       recordPurchase,
       recordSaleReturn,
       recordPurchaseReturn,
@@ -1035,6 +1065,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshFromBackend,
       addCustomer,
       updateCustomer,
+      deleteCustomer,
       addSupplier,
       addProduct,
       updateProduct,
@@ -1042,6 +1073,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addUnits,
       setUnitStatus,
       recordSale,
+      cancelSale,
       recordPurchase,
       recordSaleReturn,
       recordPurchaseReturn,

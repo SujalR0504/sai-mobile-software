@@ -31,5 +31,7 @@ export function getProducts(db: DatabaseSync): Product[] {
     qty: r.qty,
     reorderLevel: r.reorder_level,
     minimumStock: r.minimum_stock ?? r.reorder_level ?? 2,
+    stockSource: r.stock_source || (r.tracked ? "NEW_STOCK" : "OLD_STOCK"),
+    stockType: r.stock_type || r.stock_source || (r.tracked ? "NEW_STOCK" : "OLD_STOCK"),
   }));
 }

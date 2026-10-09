@@ -348,6 +348,8 @@ export interface Product {
   openingStock?: number;
   reservedQty?: number;
   reorderLevel: number;
+  stockSource?: "OLD_STOCK" | "NEW_STOCK" | "OPENING_STOCK" | string;
+  stockType?: "OLD_STOCK" | "NEW_STOCK" | "OPENING_STOCK" | string;
 }
 
 export interface Unit {
@@ -723,7 +725,11 @@ export interface Sale {
   payments: PaymentSplit[];
   quotation?: boolean;
   note?: string;
+  customerNote?: string;
   status?: "COMPLETED" | "VOID" | "CANCELLED";
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
   isEmi?: boolean;
   emiCompanyId?: string;
   emiCompanyName?: string;
@@ -1147,11 +1153,14 @@ export interface PurchasePaymentInput {
 
 export type StockMovementType =
   | "PURCHASE"
+  | "PURCHASE_IN"
   | "SALE"
+  | "SALE_OUT"
   | "SALE_RETURN"
   | "PURCHASE_RETURN"
   | "ADJUSTMENT_IN"
   | "ADJUSTMENT_OUT"
+  | "SALE_CANCEL"
   | "DAMAGE"
   | "LOSS"
   | "REPAIR_PART_USED"
@@ -1173,6 +1182,7 @@ export interface StockMovement {
   notes?: string;
   createdBy?: string;
   createdAt: string;
+  stockSource?: "OPENING_STOCK" | "PURCHASE" | "SALE_RETURN" | "STOCK_ADJUSTMENT" | string;
 }
 
 export interface CustomerLedgerEntry {

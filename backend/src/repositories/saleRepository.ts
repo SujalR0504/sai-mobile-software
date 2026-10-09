@@ -1,8 +1,18 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { InterestType, LineItem, PaymentSplit, Sale } from "../../../shared/types";
 
-export function getSales(db: DatabaseSync): Sale[] {
-  const sales = db.prepare("SELECT * FROM sales ORDER BY date DESC").all() as any[];
+export function getSales(db: DatabaseSync, options?: { includeCancelled?: boolean; status?: string }): Sale[] {
+  let query = "SELECT * FROM sales ORDER BY date DESC";
+  let params: any[] = [];
+
+  if (options?.status && options.status !== "ALL") {
+    query = "SELECT * FROM sales WHERE status = ? ORDER BY date DESC";
+    params = [options.status];
+  } else if (!options?.includeCancelled && options?.status !== "ALL") {
+    query = "SELECT * FROM sales WHERE status != 'CANCELLED' AND status != 'VOID' ORDER BY date DESC";
+  }
+
+  const sales = db.prepare(query).all(...params) as any[];
   return sales.map((s) => {
     const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(s.id) as any[];
     const payments = db.prepare("SELECT * FROM payments WHERE party = 'customer' AND ref_id = ?").all(s.id) as any[];
@@ -35,7 +45,11 @@ export function getSales(db: DatabaseSync): Sale[] {
       })),
       quotation: Boolean(s.quotation),
       note: s.note ?? undefined,
-      status: (s.status as "COMPLETED" | "VOID") || "COMPLETED",
+      customerNote: s.customer_note ?? s.note ?? undefined,
+      status: (s.status as "COMPLETED" | "VOID" | "CANCELLED") || "COMPLETED",
+      cancelledAt: s.cancelled_at ?? undefined,
+      cancelledBy: s.cancelled_by ?? undefined,
+      cancellationReason: s.cancellation_reason ?? undefined,
       isEmi: Boolean(s.is_emi),
       emiCompanyId: s.emi_company_id ?? undefined,
       emiDownPayment: s.emi_down_payment ?? undefined,

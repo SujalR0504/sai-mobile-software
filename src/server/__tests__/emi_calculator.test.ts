@@ -33,12 +33,12 @@ describe("Mobile Shop ERP - Full EMI Calculator & Management Test Suite", () => 
       `).run(testCustomerId);
     }
 
-    // Ensure test product exists
-    const prod = db.prepare("SELECT id FROM products LIMIT 1").get() as any;
+    // Ensure test product exists with available stock
+    const prod = db.prepare("SELECT id FROM products WHERE qty > 0 LIMIT 1").get() as any;
     if (prod) {
       testProductId = prod.id;
     } else {
-      testProductId = "prod_test_emi";
+      testProductId = "prod_test_emi_" + Date.now();
       db.prepare(`
         INSERT INTO products (id, name, category, brand, model, purchase_price, selling_price, qty, tracked)
         VALUES (?, 'OPPO F33 PRO 5G', 'Mobiles', 'OPPO', 'F33 PRO', 12000, 15000, 10, 0)

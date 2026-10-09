@@ -53,6 +53,7 @@ export function saleToInvoiceProps(sale: Sale, db: AppDatabase): InvoiceDocument
     placeOfSupply: db.settings.state || "Madhya Pradesh",
     stateCode: db.settings.stateCode || "23",
     remarks: sale.note || (sale.quotation ? "Quotation only — not a tax invoice" : undefined),
+    customerNote: sale.customerNote || sale.note,
     party: {
       name: customer?.name || "Cash Customer",
       phone: customer?.phone && customer.phone !== "—" ? customer.phone : "",

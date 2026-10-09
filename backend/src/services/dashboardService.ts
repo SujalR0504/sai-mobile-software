@@ -38,6 +38,19 @@ export interface DashboardSummary {
   adjustments: number;
   netMovement: number;
   closingStock: number;
+  // Old vs New Stock Classification
+  oldStockQty: number;
+  oldStockValue: number;
+  newStockQty: number;
+  newStockValue: number;
+  // Today's Sales Breakdown
+  todayInward: number;
+  todayOutward: number;
+  todayBills: number;
+  todayItemsSold: number;
+  todayMobileSold: number;
+  todayAccessoriesSold: number;
+  todaySalesValue: number;
 }
 
 export function getDashboardSummary(db: DatabaseSync, range?: DashboardDateRange): DashboardSummary {
@@ -45,20 +58,20 @@ export function getDashboardSummary(db: DatabaseSync, range?: DashboardDateRange
   const dateFrom = range?.dateFrom || today;
   const dateTo = range?.dateTo || dateFrom;
 
-  // 1. Sales in date range
+  // 1. Sales in date range (exclude VOID and CANCELLED)
   const salesAgg = db.prepare(`
     SELECT
       COALESCE(SUM(total), 0) as total,
       COUNT(*) as count
     FROM sales
-    WHERE date >= ? AND date <= ? AND quotation = 0 AND (status IS NULL OR status != 'VOID')
+    WHERE date >= ? AND date <= ? AND quotation = 0 AND (status IS NULL OR (status != 'VOID' AND status != 'CANCELLED'))
   `).get(dateFrom, dateTo) as { total: number; count: number };
 
   const salesQtyAgg = db.prepare(`
     SELECT COALESCE(SUM(si.qty), 0) as qty
     FROM sale_items si
     JOIN sales s ON si.sale_id = s.id
-    WHERE s.date >= ? AND s.date <= ? AND s.quotation = 0 AND (s.status IS NULL OR s.status != 'VOID')
+    WHERE s.date >= ? AND s.date <= ? AND s.quotation = 0 AND (s.status IS NULL OR (s.status != 'VOID' AND s.status != 'CANCELLED'))
   `).get(dateFrom, dateTo) as { qty: number };
 
   // 2. Purchases in date range
@@ -142,10 +155,16 @@ export function getDashboardSummary(db: DatabaseSync, range?: DashboardDateRange
   const adjustmentsIn = adjInAgg.qty;
   const adjustmentsOut = adjOutAgg.qty;
   const adjustments = adjustmentsIn - adjustmentsOut;
-
-  const netMovement = purchasedQty - purchaseReturnQty - soldQty + salesReturnQty + adjustments;
+  const netMovement = purchasedQty + salesReturnQty - soldQty - purchaseReturnQty + adjustments;
   const closingStock = currentStock;
   const openingStock = Math.max(0, closingStock - netMovement);
+
+  // 8. Old vs New Stock Breakdown
+  const oldStock = getOldStock(db);
+  const newStock = getNewStock(db);
+
+  // 9. Today's Sales Breakdown
+  const dailySales = getDailySales(db, range);
 
   return {
     dateFrom,
@@ -176,6 +195,17 @@ export function getDashboardSummary(db: DatabaseSync, range?: DashboardDateRange
     adjustments,
     netMovement,
     closingStock,
+    oldStockQty: oldStock.totalQuantity,
+    oldStockValue: oldStock.totalStockValue,
+    newStockQty: newStock.totalQuantity,
+    newStockValue: newStock.totalStockValue,
+    todayInward: purchasedQty,
+    todayOutward: soldQty,
+    todayBills: dailySales.bills,
+    todayItemsSold: dailySales.itemsSold,
+    todayMobileSold: dailySales.mobileSold,
+    todayAccessoriesSold: dailySales.accessoriesSold,
+    todaySalesValue: dailySales.salesValue,
   };
 }
 
@@ -223,7 +253,7 @@ export function getDailyStockMovement(db: DatabaseSync, range?: DashboardDateRan
       SELECT COALESCE(SUM(si.qty), 0) as qty
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.date = ? AND s.quotation = 0 AND (s.status IS NULL OR s.status != 'VOID')
+      WHERE s.date = ? AND s.quotation = 0 AND (s.status IS NULL OR (s.status != 'VOID' AND s.status != 'CANCELLED'))
     `).get(dStr) as { qty: number };
 
     const prRow = db.prepare(`
@@ -406,6 +436,184 @@ export function getItemWiseDailyMovement(db: DatabaseSync, range?: DashboardDate
   }
 
   return rows;
+}
+
+export const getDailyItemMovement = getItemWiseDailyMovement;
+
+export interface DailySalesSummary {
+  dateFrom: string;
+  dateTo: string;
+  bills: number;
+  itemsSold: number;
+  mobileSold: number;
+  accessoriesSold: number;
+  salesValue: number;
+  todayMobileSold?: number;
+  todayAccessoriesSold?: number;
+  todayItemsSold?: number;
+}
+
+export function getDailySales(db: DatabaseSync, range?: DashboardDateRange): DailySalesSummary {
+  const today = todayISO();
+  const dateFrom = range?.dateFrom || today;
+  const dateTo = range?.dateTo || dateFrom;
+
+  const salesAgg = db.prepare(`
+    SELECT
+      COUNT(DISTINCT s.id) as bills,
+      COALESCE(SUM(s.total), 0) as sales_value
+    FROM sales s
+    WHERE s.date >= ? AND s.date <= ?
+      AND s.quotation = 0
+      AND (s.status IS NULL OR (s.status != 'VOID' AND s.status != 'CANCELLED'))
+  `).get(dateFrom, dateTo) as { bills: number; sales_value: number };
+
+  const items = db.prepare(`
+    SELECT
+      si.qty,
+      si.product_id,
+      si.imei,
+      p.category
+    FROM sale_items si
+    JOIN sales s ON si.sale_id = s.id
+    LEFT JOIN products p ON si.product_id = p.id
+    WHERE s.date >= ? AND s.date <= ?
+      AND s.quotation = 0
+      AND (s.status IS NULL OR (s.status != 'VOID' AND s.status != 'CANCELLED'))
+  `).all(dateFrom, dateTo) as Array<{ qty: number; product_id: string; imei?: string; category?: string }>;
+
+  let itemsSold = 0;
+  let mobileSold = 0;
+  let accessoriesSold = 0;
+
+  for (const item of items) {
+    const q = item.qty || 1;
+    itemsSold += q;
+    const isMobile = (item.category || "").toLowerCase().includes("mobile") || Boolean(item.imei);
+    if (isMobile) {
+      mobileSold += q;
+    } else {
+      accessoriesSold += q;
+    }
+  }
+
+  return {
+    dateFrom,
+    dateTo,
+    bills: salesAgg.bills,
+    itemsSold,
+    mobileSold,
+    accessoriesSold,
+    salesValue: Math.round(salesAgg.sales_value),
+    todayMobileSold: mobileSold,
+    todayAccessoriesSold: accessoriesSold,
+    todayItemsSold: itemsSold,
+  };
+}
+
+export interface OldStockItem {
+  id: string;
+  product: string;
+  category: string;
+  brand: string;
+  model: string;
+  openingQuantity: number;
+  currentQuantity: number;
+  purchaseValue: number;
+  currentStockValue: number;
+  stockSource: string;
+}
+
+export function getOldStock(db: DatabaseSync): {
+  items: OldStockItem[];
+  totalItems: number;
+  totalQuantity: number;
+  totalStockValue: number;
+} {
+  const rows = db.prepare(`
+    SELECT p.*,
+      COALESCE(
+        (SELECT COUNT(*) FROM units u WHERE u.product_id = p.id AND u.status IN ('available', 'IN_STOCK')),
+        p.qty
+      ) as real_qty
+    FROM products p
+    WHERE p.stock_source IN ('OLD_STOCK', 'OPENING_STOCK')
+       OR p.stock_type IN ('OLD_STOCK', 'OPENING_STOCK')
+       OR (p.tracked = 0 AND (p.stock_source IS NULL OR p.stock_source = 'OLD_STOCK' OR p.stock_type = 'OLD_STOCK'))
+    ORDER BY p.category ASC, p.name ASC
+  `).all() as any[];
+
+  const items: OldStockItem[] = rows.map((r) => {
+    const qty = r.tracked ? r.real_qty : (r.qty || 0);
+    const purchasePrice = r.purchase_price || 0;
+    return {
+      id: r.id,
+      product: r.name,
+      category: r.category,
+      brand: r.brand,
+      model: r.model,
+      openingQuantity: r.qty || qty,
+      currentQuantity: qty,
+      purchaseValue: purchasePrice,
+      currentStockValue: Math.round(qty * purchasePrice),
+      stockSource: r.stock_source || "OLD_STOCK",
+    };
+  });
+
+  const totalQuantity = items.reduce((sum, i) => sum + i.currentQuantity, 0);
+  const totalStockValue = items.reduce((sum, i) => sum + i.currentStockValue, 0);
+
+  return {
+    items,
+    totalItems: items.length,
+    totalQuantity,
+    totalStockValue,
+  };
+}
+
+export function getNewStock(db: DatabaseSync): {
+  items: any[];
+  totalItems: number;
+  totalQuantity: number;
+  totalStockValue: number;
+} {
+  const rows = db.prepare(`
+    SELECT p.*,
+      COALESCE(
+        (SELECT COUNT(*) FROM units u WHERE u.product_id = p.id AND u.status IN ('available', 'IN_STOCK')),
+        p.qty
+      ) as real_qty
+    FROM products p
+    WHERE (p.stock_source = 'NEW_STOCK' OR p.stock_type = 'NEW_STOCK' OR p.tracked = 1)
+      AND (p.stock_source NOT IN ('OLD_STOCK', 'OPENING_STOCK') AND (p.stock_type IS NULL OR p.stock_type NOT IN ('OLD_STOCK', 'OPENING_STOCK')))
+    ORDER BY p.category ASC, p.name ASC
+  `).all() as any[];
+
+  const items = rows.map((r) => {
+    const qty = r.tracked ? r.real_qty : (r.qty || 0);
+    const purchasePrice = r.purchase_price || 0;
+    return {
+      id: r.id,
+      product: r.name,
+      category: r.category,
+      brand: r.brand,
+      model: r.model,
+      currentQuantity: qty,
+      purchaseValue: purchasePrice,
+      currentStockValue: Math.round(qty * purchasePrice),
+      stockSource: r.stock_source || "NEW_STOCK",
+    };
+  });
+
+  const totalQuantity = items.reduce((sum, i) => sum + i.currentQuantity, 0);
+  const totalStockValue = items.reduce((sum, i) => sum + i.currentStockValue, 0);
+
+  return {
+    items,
+    totalItems: items.length,
+    totalQuantity,
+    totalStockValue,
+  };
 }
 
 export interface CategoryStockRow {

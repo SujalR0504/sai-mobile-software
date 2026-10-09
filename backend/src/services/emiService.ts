@@ -102,7 +102,7 @@ export function createFinanceCompany(
     input.defaultInterestRate || 0,
     input.defaultTenure || 12,
     input.notes ?? null,
-    input.active ? 1 : 0,
+    input.active !== false ? 1 : 0,
     now
   );
 

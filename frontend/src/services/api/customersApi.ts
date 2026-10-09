@@ -25,6 +25,12 @@ export const customersApi = {
   updateCustomer: (id: string, patch: Partial<Customer>) =>
     apiClient.patch<Customer>(`/api/customers/${id}`, patch),
 
+  deleteCustomer: (id: string, force = false) =>
+    apiClient.delete<{ success: boolean; id: string; name: string }>(
+      `/api/customers/${id}${force ? "?force=true" : ""}`,
+      { body: JSON.stringify({ force }) }
+    ),
+
   getCustomerDue: (id: string) =>
     apiClient.get<{ customerId: string; due: number }>(`/api/customers/${id}/due`),
 

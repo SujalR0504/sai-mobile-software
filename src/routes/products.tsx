@@ -319,6 +319,8 @@ export function ProductsPage() {
       barcode: "",
       hsn: "85171300",
       openingStock: 0,
+      stockType: "NEW_STOCK",
+      stockSource: "OPENING_STOCK",
     });
     setModalOpen(true);
   };
@@ -356,6 +358,8 @@ export function ProductsPage() {
       barcode: p.barcode || "",
       hsn: p.hsn || (p.tracked ? "85171300" : "85177900"),
       openingStock: p.openingStock || 0,
+      stockType: p.stockType || "NEW_STOCK",
+      stockSource: p.stockSource || "PURCHASE",
     });
     setModalOpen(true);
   };
@@ -544,6 +548,8 @@ export function ProductsPage() {
       barcode: form.barcode?.trim() || undefined,
       hsn: form.hsn?.trim() || undefined,
       openingStock: form.openingStock ? Number(form.openingStock) : undefined,
+      stockType: form.stockType || "NEW_STOCK",
+      stockSource: form.stockSource || "PURCHASE",
     };
 
     try {
@@ -1769,6 +1775,27 @@ export function ProductsPage() {
                 value={form.reorderLevel}
                 onChange={(e) => setForm({ ...form, reorderLevel: Number(e.target.value) })}
               />
+            </Field>
+            <Field label="Stock Classification / Age">
+              <Select
+                value={form.stockType || "NEW_STOCK"}
+                onChange={(e) => setForm({ ...form, stockType: e.target.value as any })}
+              >
+                <option value="NEW_STOCK">NEW_STOCK (Newly Purchased / Current)</option>
+                <option value="OLD_STOCK">OLD_STOCK (Existing / Old Accessories)</option>
+                <option value="OPENING_STOCK">OPENING_STOCK (Opening Inventory)</option>
+              </Select>
+            </Field>
+            <Field label="Stock Source">
+              <Select
+                value={form.stockSource || "PURCHASE"}
+                onChange={(e) => setForm({ ...form, stockSource: e.target.value as any })}
+              >
+                <option value="PURCHASE">PURCHASE (Direct Vendor Inward)</option>
+                <option value="OPENING_STOCK">OPENING_STOCK (Initial Opening Stock)</option>
+                <option value="SALE_RETURN">SALE_RETURN (Customer Return)</option>
+                <option value="ADJUSTMENT">ADJUSTMENT (Stock Audit Correction)</option>
+              </Select>
             </Field>
           </div>
 

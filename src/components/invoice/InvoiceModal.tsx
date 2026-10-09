@@ -44,6 +44,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = (props) => {
       docProps.payment?.paid !== undefined ? `*Paid: ₹${docProps.payment.paid}*` : "",
       docProps.payment?.due && docProps.payment.due > 0 ? `*Balance Due: ₹${docProps.payment.due}*` : "",
       docProps.payment?.isEmi ? `*Finance Partner: ${docProps.payment.emiCompanyName} (Down Payment: ₹${docProps.payment.emiDownPayment || 0})*` : "",
+      docProps.customerNote && docProps.customerNote.trim() ? `-----------------------------\n*Customer Note:*\n${docProps.customerNote.trim()}` : "",
       `-----------------------------`,
       `Thank you for choosing ${docProps.settings.shopName || "SHRI SAI MOBILE"}!`,
       `Support: ${docProps.settings.phone || ""}`

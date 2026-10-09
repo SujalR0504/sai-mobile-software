@@ -52,6 +52,7 @@ export interface InvoiceDocumentProps {
   stateCode?: string;
   salesPerson?: string;
   remarks?: string;
+  customerNote?: string;
 
   // Party Details (Buyer / Dealer)
   party: {
@@ -135,6 +136,7 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
   stateCode,
   salesPerson,
   remarks,
+  customerNote,
   party,
   items,
   totals,
@@ -640,6 +642,18 @@ export const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({
           Total Quantity: <span className="font-black text-slate-900">{totalQty} Units</span>
         </div>
       </div>
+
+      {/* CUSTOMER NOTE (Only rendered if present) */}
+      {customerNote && customerNote.trim() && (
+        <div className="border-x border-b border-black p-2.5 bg-amber-50/50 text-[10px]">
+          <div className="font-bold text-slate-800 uppercase tracking-wider text-[8.5px] mb-0.5">
+            CUSTOMER NOTE
+          </div>
+          <div className="text-slate-800 font-medium whitespace-pre-wrap leading-relaxed">
+            {customerNote.trim()}
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 6. BOTTOM 3-SECTION SUMMARY (Terms, Finance/Promo, Totals Table)          */}

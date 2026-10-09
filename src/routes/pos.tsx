@@ -57,12 +57,22 @@ interface Held {
   discount: number;
 }
 
+const QUICK_NOTES = [
+  "Warranty as per company policy.",
+  "No return after sale.",
+  "Accessories checked by customer.",
+  "Payment received in full.",
+  "Customer will collect product later.",
+  "Screen guard installed free of cost.",
+];
+
 function POS() {
   const { db, recordSale, addCustomer } = useStore();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("All");
   const [items, setItems] = useState<LineItem[]>([]);
   const [discount, setDiscount] = useState(0);
+  const [customerNote, setCustomerNote] = useState("");
   const [customerId, setCustomerId] = useState("c0");
   const customer = useMemo(
     () => db.customers.find((c) => c.id === customerId),
@@ -410,6 +420,7 @@ function POS() {
     setItems([]);
     setDiscount(0);
     setDiscountAuthorized(false);
+    setCustomerNote("");
     setCustomerId("c0");
     setCustomPaidAmount(null);
     setSplits({});
@@ -681,6 +692,8 @@ function POS() {
           selectedTemplateId,
           items,
           discount,
+          customerNote: customerNote.trim() || undefined,
+          note: customerNote.trim() || undefined,
           payments: buildPayments(),
           quotation: false,
           isEmi: isEmiSale,
@@ -711,6 +724,8 @@ function POS() {
       selectedTemplateId,
       items,
       discount,
+      customerNote: customerNote.trim() || undefined,
+      note: customerNote.trim() || undefined,
       payments: quotation ? [] : buildPayments(),
       quotation,
       isEmi: isEmiSale,
@@ -1877,6 +1892,44 @@ function POS() {
                   })()}
                 </div>
               )}
+
+              {/* Customer Note / Billing Note */}
+              <div className="space-y-1.5 pt-2 border-t border-border/60">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11.5px] font-bold text-foreground">
+                    Customer Note
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground hidden sm:inline">Quick Note:</span>
+                    <select
+                      className="h-6.5 text-[10.5px] rounded border border-border/80 bg-background px-1.5 py-0.5 text-foreground focus:outline-none"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val) {
+                          setCustomerNote((prev) => (prev.trim() ? `${prev.trim()}\n${val}` : val));
+                          e.target.value = "";
+                        }
+                      }}
+                    >
+                      <option value="" disabled>Select Quick Note ▼</option>
+                      {QUICK_NOTES.map((qn) => (
+                        <option key={qn} value={qn}>{qn}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <textarea
+                  rows={2}
+                  value={customerNote}
+                  onChange={(e) => setCustomerNote(e.target.value)}
+                  placeholder="e.g. Screen guard installed free of cost..."
+                  className="w-full text-[12px] rounded-lg border border-border/80 bg-background p-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/60 resize-none font-sans"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  This note will appear on the customer invoice.
+                </p>
+              </div>
             </div>
 
             {/* 4. LIVE SUMMARY BOX */}

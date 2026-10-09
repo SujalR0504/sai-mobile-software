@@ -84,9 +84,10 @@ export function addProduct(db: DatabaseSync, p: Omit<Product, "id"> & { id?: str
       id, name, brand, model, variant, ram, storage, color,
       category, category_id, tracked, mrp, purchase_price, selling_price,
       gst, supplier_id, warranty_months, qty, reorder_level,
-      subcategoryId_or_null, brand_id, model_id, sku, barcode, hsn, minimum_stock
+      subcategoryId_or_null, brand_id, model_id, sku, barcode, hsn, minimum_stock,
+      stock_type, stock_source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `.replace("subcategoryId_or_null", "subcategory_id"));
 
   let categoryName = p.category;
@@ -102,6 +103,9 @@ export function addProduct(db: DatabaseSync, p: Omit<Product, "id"> & { id?: str
   const initialQty = (p.openingStock !== undefined && p.openingStock !== null && p.openingStock >= 0)
     ? p.openingStock
     : (p.qty || 0);
+
+  const stockType = p.stockType || p.stockSource || "NEW_STOCK";
+  const stockSource = p.stockSource || (p.openingStock ? "OPENING_STOCK" : "PURCHASE");
 
   insertStmt.run(
     id,
@@ -129,7 +133,9 @@ export function addProduct(db: DatabaseSync, p: Omit<Product, "id"> & { id?: str
     sku,
     p.barcode?.trim() ?? null,
     p.hsn?.trim() ?? null,
-    p.minimumStock ?? p.reorderLevel ?? 2
+    p.minimumStock ?? p.reorderLevel ?? 2,
+    stockType,
+    stockSource
   );
 
   // Initialize stock movement if opening stock is entered
@@ -211,6 +217,8 @@ export function updateProduct(db: DatabaseSync, id: string, patch: Partial<Produ
     warrantyMonths: patch.warrantyMonths !== undefined ? patch.warrantyMonths : current.warranty_months,
     qty: patch.qty !== undefined ? patch.qty : current.qty,
     reorderLevel: patch.reorderLevel !== undefined ? patch.reorderLevel : current.reorder_level,
+    stockType: patch.stockType !== undefined ? patch.stockType : (current.stock_type ?? undefined),
+    stockSource: patch.stockSource !== undefined ? patch.stockSource : (current.stock_source ?? undefined),
   };
 
   validateHierarchyRelationships(db, {
@@ -225,7 +233,8 @@ export function updateProduct(db: DatabaseSync, id: string, patch: Partial<Produ
     SET name = ?, brand = ?, model = ?, variant = ?, ram = ?, storage = ?, color = ?,
         category = ?, category_id = ?, tracked = ?, mrp = ?, purchase_price = ?, selling_price = ?,
         gst = ?, supplier_id = ?, warranty_months = ?, qty = ?, reorder_level = ?,
-        subcategory_id = ?, brand_id = ?, model_id = ?, sku = ?, barcode = ?, hsn = ?
+        subcategory_id = ?, brand_id = ?, model_id = ?, sku = ?, barcode = ?, hsn = ?,
+        stock_type = ?, stock_source = ?
     WHERE id = ?
   `);
 
@@ -254,6 +263,8 @@ export function updateProduct(db: DatabaseSync, id: string, patch: Partial<Produ
     updated.sku ?? null,
     updated.barcode ?? null,
     updated.hsn ?? null,
+    updated.stockType || "NEW_STOCK",
+    updated.stockSource || "PURCHASE",
     id
   );
 
@@ -432,4 +443,23 @@ export function deleteProduct(
     throw error;
   }
 }
+
+export function updateProductStockType(
+  db: DatabaseSync,
+  productId: string,
+  stockType: "OLD_STOCK" | "NEW_STOCK" | "OPENING_STOCK" | string
+): { success: boolean; id: string; stockType: string } {
+  const prod = db.prepare("SELECT id FROM products WHERE id = ?").get(productId) as any;
+  if (!prod) throw new Error(`Product ${productId} not found`);
+
+  db.prepare(`
+    UPDATE products
+    SET stock_type = ?, stock_source = ?
+    WHERE id = ?
+  `).run(stockType, stockType, productId);
+
+  return { success: true, id: productId, stockType };
+}
+
+export { getOldStock, getNewStock } from "./dashboardService";
 

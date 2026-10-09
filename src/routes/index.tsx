@@ -27,6 +27,8 @@ import {
   Filter,
   CheckCircle2,
   Eye,
+  Archive,
+  Ban,
 } from "lucide-react";
 import { InvoiceModal } from "@/components/invoice/InvoiceModal";
 import { saleToInvoiceProps } from "@/components/invoice/invoiceAdapters";
@@ -80,6 +82,17 @@ interface DashboardData {
     adjustments: number;
     netMovement: number;
     closingStock: number;
+    oldStockQty?: number;
+    oldStockValue?: number;
+    newStockQty?: number;
+    newStockValue?: number;
+    todayInward?: number;
+    todayOutward?: number;
+    todayBills?: number;
+    todayItemsSold?: number;
+    todayMobileSold?: number;
+    todayAccessoriesSold?: number;
+    todaySalesValue?: number;
   };
   stockMovement: Array<{
     date: string;
@@ -308,6 +321,17 @@ export function DashboardPage() {
     adjustments: 0,
     netMovement: 0,
     closingStock: 0,
+    oldStockQty: 0,
+    oldStockValue: 0,
+    newStockQty: 0,
+    newStockValue: 0,
+    todayInward: 0,
+    todayOutward: 0,
+    todayBills: 0,
+    todayItemsSold: 0,
+    todayMobileSold: 0,
+    todayAccessoriesSold: 0,
+    todaySalesValue: 0,
   };
 
   const stockMovementPoints = data?.stockMovement || [];
@@ -572,53 +596,210 @@ export function DashboardPage() {
         </div>
       </section>
 
-      {/* 4. STOCK OVERVIEW */}
+      {/* 4. TODAY'S STOCK */}
       {canViewStock && (
         <section className="space-y-2">
           <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wider text-muted-foreground px-1">
-            <span>Stock Overview</span>
-            <span className="text-[11px]">Real-time Inventory Balance</span>
+            <span>Today's Stock</span>
+            <span className="text-[11px] font-mono">Opening · Inward · Outward · Closing</span>
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-2xl border border-border/80 bg-white p-4 shadow-xs">
               <div className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
-                <Package className="size-3.5 text-primary" /> CURRENT STOCK
+                <Package className="size-3.5 text-slate-600" /> OPENING STOCK
               </div>
-              <div className="text-2xl font-black text-foreground mt-2">
-                {summary.currentStock} <span className="text-sm font-semibold text-muted-foreground">Units</span>
+              <div className="text-2xl font-black text-foreground mt-2 font-mono">
+                {summary.openingStock} <span className="text-sm font-semibold text-muted-foreground">Units</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">Total physical inventory</div>
+              <div className="text-[11px] text-muted-foreground mt-1">Stock at start of period</div>
             </div>
 
-            <div className="rounded-2xl border border-border/80 bg-white p-4 shadow-xs">
-              <div className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
-                <Smartphone className="size-3.5 text-indigo-600" /> IMEI STOCK
+            <div className="rounded-2xl border border-blue-200/80 bg-blue-50/20 p-4 shadow-xs">
+              <div className="text-xs font-bold text-blue-700 flex items-center gap-1.5">
+                <ArrowDownLeft className="size-3.5 text-blue-600" /> TODAY'S INWARD
               </div>
-              <div className="text-2xl font-black text-indigo-700 mt-2">
-                {summary.imeiStock} <span className="text-sm font-semibold text-muted-foreground">Devices</span>
+              <div className="text-2xl font-black text-blue-700 mt-2 font-mono">
+                +{summary.todayInward} <span className="text-sm font-semibold text-blue-600/80">Units</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">Serialized in stock</div>
+              <div className="text-[11px] text-muted-foreground mt-1">Purchase inward + adjustments</div>
             </div>
 
-            <div className="rounded-2xl border border-border/80 bg-white p-4 shadow-xs">
-              <div className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
-                <Layers className="size-3.5 text-emerald-600" /> ACCESSORY STOCK
+            <div className="rounded-2xl border border-rose-200/80 bg-rose-50/20 p-4 shadow-xs">
+              <div className="text-xs font-bold text-rose-700 flex items-center gap-1.5">
+                <ArrowUpRight className="size-3.5 text-rose-600" /> TODAY'S OUTWARD
               </div>
-              <div className="text-2xl font-black text-emerald-700 mt-2">
-                {summary.accessoryStock} <span className="text-sm font-semibold text-muted-foreground">Units</span>
+              <div className="text-2xl font-black text-rose-700 mt-2 font-mono">
+                −{summary.todayOutward} <span className="text-sm font-semibold text-rose-600/80">Units</span>
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">Retail accessories & parts</div>
+              <div className="text-[11px] text-muted-foreground mt-1">Customer sales + outwards</div>
             </div>
 
-            <div className="rounded-2xl border border-border/80 bg-white p-4 shadow-xs">
+            <div className="rounded-2xl border border-emerald-300 bg-emerald-500/10 p-4 shadow-xs">
+              <div className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                <Layers className="size-3.5 text-emerald-700" /> CLOSING STOCK
+              </div>
+              <div className="text-2xl font-black text-emerald-800 mt-2 font-mono">
+                {summary.closingStock} <span className="text-sm font-semibold text-emerald-700">Units</span>
+              </div>
+              <div className="text-[11px] text-emerald-800 font-semibold mt-1">Available physical stock</div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* 5. STOCK TYPE & CLASSIFICATION */}
+      {canViewStock && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wider text-muted-foreground px-1">
+            <span>Stock Type Classification</span>
+            <span className="text-[11px]">Old Stock vs Newly Purchased</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-4 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                  <Archive className="size-3.5 text-amber-700" /> OLD STOCK / ACCESSORIES
+                </div>
+                <div className="text-2xl font-black text-amber-950 mt-1.5 font-mono">
+                  {summary.oldStockQty ?? 0} <span className="text-sm font-semibold text-amber-800">Units</span>
+                </div>
+                <div className="text-[11.5px] text-amber-800 font-semibold mt-0.5">
+                  Valuation: {inr(summary.oldStockValue ?? 0)}
+                </div>
+              </div>
+              <Link
+                to="/reports"
+                search={{ tab: "old_stock" }}
+                className="text-xs font-bold text-amber-800 hover:text-amber-950 bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 rounded-xl transition-all"
+              >
+                View Old Stock →
+              </Link>
+            </div>
+
+            <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/[0.06] p-4 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                  <Package className="size-3.5 text-indigo-700" /> NEW / CURRENT STOCK
+                </div>
+                <div className="text-2xl font-black text-indigo-950 mt-1.5 font-mono">
+                  {summary.newStockQty ?? 0} <span className="text-sm font-semibold text-indigo-800">Units</span>
+                </div>
+                <div className="text-[11.5px] text-indigo-800 font-semibold mt-0.5">
+                  Valuation: {inr(summary.newStockValue ?? 0)}
+                </div>
+              </div>
+              <Link
+                to="/products"
+                className="text-xs font-bold text-indigo-800 hover:text-indigo-950 bg-indigo-500/15 border border-indigo-500/30 px-3 py-1.5 rounded-xl transition-all"
+              >
+                Manage Products →
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* 6. TODAY'S SALES / OUTWARD */}
+      {canViewSales && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wider text-muted-foreground px-1">
+            <span>Today's Sales Breakdown</span>
+            <span className="text-[11px] font-mono">Bills · Items · Mobiles · Accessories</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="rounded-2xl border border-border/80 bg-white p-3.5 shadow-xs">
               <div className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
-                <ReceiptIndianRupee className="size-3.5 text-amber-600" /> STOCK VALUE
+                <Receipt className="size-3.5 text-primary" /> BILLS
               </div>
-              <div className="text-2xl font-black text-foreground mt-2">
-                {inr(summary.stockValue)}
+              <div className="text-2xl font-black text-foreground mt-1.5 font-mono">
+                {summary.todayBills ?? summary.salesBills}
               </div>
-              <div className="text-[11px] text-muted-foreground mt-1">Purchase cost valuation</div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">Invoices issued</div>
+            </div>
+
+            <div className="rounded-2xl border border-border/80 bg-white p-3.5 shadow-xs">
+              <div className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                <Package className="size-3.5 text-indigo-600" /> TOTAL ITEMS SOLD
+              </div>
+              <div className="text-2xl font-black text-foreground mt-1.5 font-mono">
+                {summary.todayItemsSold ?? summary.salesQty}
+              </div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">Units dispatched</div>
+            </div>
+
+            <div className="rounded-2xl border border-border/80 bg-white p-3.5 shadow-xs">
+              <div className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
+                <Smartphone className="size-3.5 text-indigo-600" /> MOBILE PHONES SOLD
+              </div>
+              <div className="text-2xl font-black text-indigo-700 mt-1.5 font-mono">
+                {summary.todayMobileSold ?? 0}
+              </div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">IMEI Handsets</div>
+            </div>
+
+            <div className="rounded-2xl border border-border/80 bg-white p-3.5 shadow-xs">
+              <div className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
+                <Layers className="size-3.5 text-emerald-600" /> ACCESSORIES SOLD
+              </div>
+              <div className="text-2xl font-black text-emerald-700 mt-1.5 font-mono">
+                {summary.todayAccessoriesSold ?? 0}
+              </div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">Chargers, covers, etc.</div>
+            </div>
+
+            <div className="col-span-2 sm:col-span-1 rounded-2xl border border-primary/30 bg-primary/[0.04] p-3.5 shadow-xs">
+              <div className="text-xs font-bold text-primary flex items-center gap-1.5">
+                <ReceiptIndianRupee className="size-3.5" /> SALES VALUE
+              </div>
+              <div className="text-2xl font-black text-primary mt-1.5 font-mono">
+                {inr(summary.todaySalesValue ?? summary.salesTotal)}
+              </div>
+              <div className="text-[10.5px] text-muted-foreground mt-0.5">Counter turnover</div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* 7. STOCK ALERTS QUICK SUMMARY */}
+      {canViewStock && (lowStock.length > 0 || outOfStock.length > 0) && (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between text-xs font-extrabold uppercase tracking-wider text-muted-foreground px-1">
+            <span>Stock Alerts</span>
+            <span className="text-[11px] text-destructive font-bold">Action Needed</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-3.5 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="size-3.5 text-amber-600" /> LOW STOCK ITEMS
+                </div>
+                <div className="text-xl font-black text-amber-950 mt-1 font-mono">
+                  {lowStock.length} Products Low
+                </div>
+                <div className="text-[11px] text-amber-800">Stock below reorder threshold</div>
+              </div>
+              <Link to="/products" className="text-xs font-bold text-amber-800 hover:underline">
+                Reorder →
+              </Link>
+            </div>
+
+            <div className="rounded-2xl border border-destructive/30 bg-destructive/[0.06] p-3.5 shadow-xs flex items-center justify-between">
+              <div>
+                <div className="text-xs font-bold text-destructive flex items-center gap-1.5">
+                  <Ban className="size-3.5 text-destructive" /> OUT OF STOCK ITEMS
+                </div>
+                <div className="text-xl font-black text-destructive mt-1 font-mono">
+                  {outOfStock.length} Products Zero Stock
+                </div>
+                <div className="text-[11px] text-destructive/80">Stock completely exhausted</div>
+              </div>
+              <Link to="/purchase" className="text-xs font-bold text-destructive hover:underline">
+                Inward Stock →
+              </Link>
             </div>
           </div>
         </section>

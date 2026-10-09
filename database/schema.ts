@@ -209,7 +209,9 @@ export function initSchema(db: DatabaseSync): void {
       supplier_id TEXT,
       warranty_months INTEGER NOT NULL DEFAULT 12,
       qty INTEGER NOT NULL DEFAULT 0,
-      reorder_level INTEGER NOT NULL DEFAULT 2
+      reorder_level INTEGER NOT NULL DEFAULT 2,
+      stock_source TEXT DEFAULT 'NEW_STOCK',
+      stock_type TEXT DEFAULT 'NEW_STOCK'
     );
 
     CREATE TABLE IF NOT EXISTS units (
@@ -243,7 +245,8 @@ export function initSchema(db: DatabaseSync): void {
       reference_id TEXT,
       notes TEXT,
       created_by TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      stock_source TEXT DEFAULT 'PURCHASE'
     );
 
     CREATE TABLE IF NOT EXISTS sales (
@@ -260,7 +263,11 @@ export function initSchema(db: DatabaseSync): void {
       paid REAL NOT NULL,
       quotation INTEGER NOT NULL DEFAULT 0,
       note TEXT,
-      status TEXT NOT NULL DEFAULT 'COMPLETED'
+      customer_note TEXT,
+      status TEXT NOT NULL DEFAULT 'COMPLETED',
+      cancelled_at TEXT,
+      cancelled_by TEXT,
+      cancellation_reason TEXT
     );
 
     CREATE TABLE IF NOT EXISTS sale_items (
@@ -928,8 +935,16 @@ export function runMigrations(db: DatabaseSync): void {
   addColumnIfNotExists(db, "note_allocations", "allocated_amount", "REAL DEFAULT 0");
   addColumnIfNotExists(db, "note_allocations", "sale_id", "TEXT");
   addColumnIfNotExists(db, "note_allocations", "purchase_id", "TEXT");
-  addColumnIfNotExists(db, "note_refunds", "reference_no", "TEXT");
   addColumnIfNotExists(db, "stock_movements", "qty", "INTEGER");
+  addColumnIfNotExists(db, "stock_movements", "stock_source", "TEXT DEFAULT 'PURCHASE'");
+
+  addColumnIfNotExists(db, "sales", "customer_note", "TEXT");
+  addColumnIfNotExists(db, "sales", "cancelled_at", "TEXT");
+  addColumnIfNotExists(db, "sales", "cancelled_by", "TEXT");
+  addColumnIfNotExists(db, "sales", "cancellation_reason", "TEXT");
+
+  addColumnIfNotExists(db, "products", "stock_source", "TEXT DEFAULT 'NEW_STOCK'");
+  addColumnIfNotExists(db, "products", "stock_type", "TEXT DEFAULT 'NEW_STOCK'");
 
   // Ensure new tables are created in existing databases
   db.exec(`
